@@ -33,6 +33,7 @@ function poi(id: string, name: string, category: Poi['category'] = 'sight'): Poi
     trip_id: 'trip-1',
     name,
     category,
+    placeholder: false,
     lat: 9.93,
     lon: -84.07,
     address: '',
@@ -202,5 +203,66 @@ describe('transports', () => {
     // Revenir à l'onglet Lieux efface le tracé.
     fireEvent.click(screen.getByRole('tab', { name: 'Lieux' }))
     expect(screen.getByTestId('map')).toHaveTextContent('carte')
+  })
+})
+
+describe('séjours', () => {
+  it('planifie des nuits dans une ville, cherche un hôtel, puis remplace la zone', async () => {
+    const area = { ...poi('area', 'La Fortuna', 'lodging'), placeholder: true, address: 'La Fortuna, Alajuela, Costa Rica' }
+    let current = [...pois]
+    let days = [day('2026-12-01'), day('2026-12-02')]
+    const calls: { path: string; body: Record<string, unknown> }[] = []
+    mockApi(
+      routes('editor', {
+        'GET /trips/trip-1/pois': () => ({ status: 200, body: current }),
+        'GET /trips/trip-1/days': () => ({ status: 200, body: days }),
+        'GET /places/search': () => ({
+          status: 200,
+          body: [{ ...area, display_name: 'La Fortuna, Alajuela, Costa Rica', osm_tag: 'place=town', osm: null, lat: 10.47, lon: -84.64 }],
+        }),
+        'POST /trips/trip-1/pois': (init) => {
+          calls.push({ path: 'pois', body: JSON.parse(String(init?.body)) })
+          current = [...current, area]
+          return { status: 201, body: area }
+        },
+        'PUT /trips/trip-1/stays': (init) => {
+          const body = JSON.parse(String(init?.body))
+          calls.push({ path: 'stays', body })
+          days = days.map((d) => (d.date >= body.first_night && d.date <= body.last_night ? { ...d, base_poi_id: body.poi_id } : d))
+          return { status: 200, body: days }
+        },
+        'POST /trips/trip-1/stays/replace': (init) => {
+          const body = JSON.parse(String(init?.body))
+          calls.push({ path: 'replace', body })
+          current = current.filter((p) => p.id !== 'area')
+          days = days.map((d) => ({ ...d, base_poi_id: d.base_poi_id === body.from_poi_id ? body.to_poi_id : d.base_poi_id }))
+          return { status: 200, body: days }
+        },
+      }),
+    )
+    await openTransport()
+    fireEvent.click(await screen.findByText('Ajouter un séjour'))
+    const form = screen.getByRole('form', { name: 'Ajouter un séjour' })
+    fireEvent.change(within(form).getByLabelText('ou chercher une ville'), { target: { value: 'fortuna' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Rechercher' }))
+    fireEvent.click(await within(form).findByRole('button', { name: 'Choisir cette ville' }))
+    fireEvent.change(within(form).getByLabelText('Dernière nuit'), { target: { value: '2026-12-02' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Enregistrer le séjour' }))
+
+    await waitFor(() => expect(calls.map((c) => c.path)).toEqual(['pois', 'stays']))
+    expect(calls[0].body).toMatchObject({ name: 'La Fortuna', category: 'lodging', placeholder: true })
+    expect(calls[1].body).toEqual({ poi_id: 'area', first_night: '2026-12-01', last_night: '2026-12-02' })
+
+    // Le séjour affiché : 2 nuits à choisir, recherche Booking aux bonnes dates pour le groupe.
+    const stay = (await screen.findByText('à choisir', { selector: '.stay-row .tag' })).closest('li')!
+    expect(within(stay).getByText(/2 nuits/)).toBeInTheDocument()
+    const booking = new URL(within(stay).getByRole('link', { name: 'Booking.com' }).getAttribute('href')!)
+    expect(booking.searchParams.get('checkin')).toBe('2026-12-01')
+    expect(booking.searchParams.get('checkout')).toBe('2026-12-03')
+    expect(booking.searchParams.get('group_adults')).toBe('2')
+
+    fireEvent.change(within(stay).getByRole('combobox', { name: 'Remplacer La Fortuna par' }), { target: { value: 'p2' } })
+    await waitFor(() => expect(calls.at(-1)).toEqual({ path: 'replace', body: { from_poi_id: 'area', to_poi_id: 'p2', remove_from: true } }))
+    expect(await screen.findByText(/🛏️ Hotel Fortuna/)).toBeInTheDocument()
   })
 })

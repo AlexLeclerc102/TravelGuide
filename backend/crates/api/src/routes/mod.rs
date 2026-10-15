@@ -12,6 +12,7 @@ pub mod places;
 pub mod pois;
 pub mod realtime;
 pub mod reviews;
+pub mod stays;
 pub mod transport;
 pub mod trips;
 
@@ -28,6 +29,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(pois::router())
         .merge(reviews::router())
         .merge(transport::router())
+        .merge(stays::router())
         .merge(itinerary::router())
         .merge(realtime::router())
 }

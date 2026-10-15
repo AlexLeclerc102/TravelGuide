@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { poiLinks, wikipediaUrl } from './links'
+import { lodgingSearchLinks, poiLinks, wikipediaUrl } from './links'
 
 const base = {
   name: 'Volcán Arenal',
@@ -50,5 +50,26 @@ describe('liens d’un lieu', () => {
     expect(links[1]).toMatchObject({ href: 'tel:+50624791111', value: '+506 2479-1111' })
     expect(links[2].href).toBe('mailto:info@arenal.example')
     expect(links[4].href).toBe('https://www.openstreetmap.org/node/276216895')
+  })
+})
+
+describe('recherche d’hébergement', () => {
+  it('reprend la ville, les dates et le nombre de voyageurs', () => {
+    const { booking, airbnb } = lodgingSearchLinks({
+      query: 'La Fortuna, Costa Rica',
+      checkin: '2026-12-02',
+      checkout: '2026-12-05',
+      adults: 3,
+    })
+    const b = new URL(booking)
+    expect(b.origin + b.pathname).toBe('https://www.booking.com/searchresults.html')
+    expect(Object.fromEntries(b.searchParams)).toEqual({
+      ss: 'La Fortuna, Costa Rica',
+      checkin: '2026-12-02',
+      checkout: '2026-12-05',
+      group_adults: '3',
+      no_rooms: '1',
+    })
+    expect(airbnb).toBe('https://www.airbnb.com/s/La%20Fortuna%2C%20Costa%20Rica/homes?checkin=2026-12-02&checkout=2026-12-05&adults=3')
   })
 })

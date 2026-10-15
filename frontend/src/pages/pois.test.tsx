@@ -51,6 +51,7 @@ const museum: Poi = {
   trip_id: 'trip-1',
   name: 'Museo Nacional',
   category: 'museum',
+  placeholder: false,
   lat: 9.9327,
   lon: -84.0716,
   address: 'San José',

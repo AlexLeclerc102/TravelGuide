@@ -21,6 +21,33 @@ export function wikipediaUrl(tag: string): string | null {
   return `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`
 }
 
+/** Texte de recherche d'un lieu : nom et adresse (l'adresse OSM commence souvent par le nom). */
+export function placeQuery(p: Pick<Poi, 'name' | 'address'>) {
+  const address = p.address.trim()
+  if (!address) return p.name
+  return address.startsWith(p.name) ? address : `${p.name}, ${address}`
+}
+
+export interface StaySearch {
+  query: string
+  checkin: string
+  checkout: string
+  adults: number
+}
+
+/**
+ * Recherche d'hébergement pour ces dates sur Booking.com et Airbnb : simples liens de
+ * recherche, sans affiliation ni suivi (rien n'est envoyé avant le clic).
+ */
+export function lodgingSearchLinks({ query, checkin, checkout, adults }: StaySearch) {
+  const booking = new URLSearchParams({ ss: query, checkin, checkout, group_adults: String(adults), no_rooms: '1' })
+  const airbnb = new URLSearchParams({ checkin, checkout, adults: String(adults) })
+  return {
+    booking: `https://www.booking.com/searchresults.html?${booking}`,
+    airbnb: `https://www.airbnb.com/s/${encodeURIComponent(query)}/homes?${airbnb}`,
+  }
+}
+
 /**
  * Liens utiles d'un lieu, du plus précis au plus général : site officiel, contact, Wikipédia,
  * fiche OpenStreetMap, puis recherche et itinéraire dans Google Maps. Rien n'est appelé
@@ -41,8 +68,7 @@ export function poiLinks(p: LinkSource): PoiLink[] {
       : `https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=17/${p.lat}/${p.lon}`,
   })
   // Le nom et l'adresse retrouvent la fiche du lieu ; sans adresse, les coordonnées.
-  const address = p.address.trim()
-  const query = address ? (address.startsWith(p.name) ? address : `${p.name}, ${address}`) : at
+  const query = p.address.trim() ? placeQuery(p) : at
   links.push({ kind: 'googleMaps', href: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}` })
   links.push({ kind: 'directions', href: `https://www.google.com/maps/dir/?api=1&destination=${at}` })
   return links

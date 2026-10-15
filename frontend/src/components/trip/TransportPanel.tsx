@@ -11,6 +11,7 @@ import {
 } from '../../api/transport'
 import { ALL_MODES, type TransportMode, type Trip } from '../../api/trips'
 import { t } from '../../i18n/fr'
+import { StaysSection } from './StaysSection'
 import { formatDate, formatDistance, formatDuration } from '../../lib/format'
 
 interface Props {
@@ -29,6 +30,7 @@ export function TransportPanel({ trip, pois, onRouteChange }: Props) {
 
   return (
     <div className="poi-panel">
+      <StaysSection trip={trip} days={days} pois={pois} canEdit={canEdit} />
       <section className="card">
         <h2 className="section-title">{t.transport.daysTitle}</h2>
         <p className="small">

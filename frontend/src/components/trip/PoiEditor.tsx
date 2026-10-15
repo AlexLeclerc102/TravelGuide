@@ -34,6 +34,7 @@ interface Form {
   phone: string
   email: string
   notes: string
+  placeholder: boolean
 }
 
 const toForm = (v: PoiInput | Poi): Form => ({
@@ -46,6 +47,7 @@ const toForm = (v: PoiInput | Poi): Form => ({
   phone: v.phone ?? '',
   email: v.email ?? '',
   notes: v.notes ?? '',
+  placeholder: v.placeholder ?? false,
 })
 
 interface Props {
@@ -69,7 +71,7 @@ export function PoiEditor({ tripId, poi, draft, onSaved, onClose }: Props) {
   const conflict = update.error instanceof ApiError && update.error.status === 409
   const error = conflict ? t.pois.conflict : (mutation.error ?? del.error) && errorMessage(mutation.error ?? del.error)
 
-  const set = (key: keyof Form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+  const set = (key: Exclude<keyof Form, 'placeholder'>) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm({ ...form, [key]: e.target.value })
 
   function setCategory(category: Category) {
@@ -89,6 +91,7 @@ export function PoiEditor({ tripId, poi, draft, onSaved, onClose }: Props) {
       phone: form.phone,
       email: form.email,
       notes: form.notes,
+      placeholder: form.category === 'lodging' && form.placeholder,
     }
     if (poi) {
       update.mutate({ id: poi.id, version: poi.version, ...values }, { onSuccess: onSaved })
@@ -131,6 +134,12 @@ export function PoiEditor({ tripId, poi, draft, onSaved, onClose }: Props) {
           />
         </label>
       </div>
+      {form.category === 'lodging' && (
+        <label className="checkbox">
+          <input type="checkbox" checked={form.placeholder} onChange={(e) => setForm({ ...form, placeholder: e.target.checked })} />
+          {t.pois.placeholder}
+        </label>
+      )}
       <label>
         {t.pois.address}
         <input value={form.address} onChange={set('address')} maxLength={500} />

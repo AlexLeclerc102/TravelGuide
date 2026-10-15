@@ -33,6 +33,9 @@ pub struct CreatePoi {
     pub name: String,
     /// Défaut : `other`.
     pub category: Option<Category>,
+    /// Zone d'hébergement encore à préciser (catégorie `lodging` uniquement).
+    #[serde(default)]
+    pub placeholder: bool,
     pub lat: f64,
     pub lon: f64,
     pub address: Option<String>,
@@ -59,6 +62,8 @@ pub struct UpdatePoi {
     pub version: i64,
     pub name: Option<String>,
     pub category: Option<Category>,
+    /// Ignoré (remis à `false`) si la catégorie n'est pas `lodging`.
+    pub placeholder: Option<bool>,
     pub lat: Option<f64>,
     pub lon: Option<f64>,
     pub address: Option<String>,
@@ -160,6 +165,11 @@ async fn create_poi(
     let name = validate::poi_name(&req.name)?;
     validate::coordinates(req.lat, req.lon)?;
     let category = req.category.unwrap_or(Category::Other);
+    if req.placeholder && category != Category::Lodging {
+        return Err(AppError::BadRequest(
+            "seul un hébergement peut être une zone à préciser".into(),
+        ));
+    }
     let duration = validate::duration_min(
         req.duration_min
             .unwrap_or_else(|| category.default_duration_min()),
@@ -196,9 +206,9 @@ async fn create_poi(
     let poi_id: Uuid = sqlx::query_scalar(
         "INSERT INTO pois (trip_id, name, category, location, address, duration_min,
                            opening_hours, country_code, website, notes, osm_type, osm_id, created_by,
-                           phone, email, wikidata, wikipedia)
+                           phone, email, wikidata, wikipedia, placeholder)
          VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, $6, $7,
-                 $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                 $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
          RETURNING id",
     )
     .bind(trip_id)
@@ -219,6 +229,7 @@ async fn create_poi(
     .bind(&email)
     .bind(&wikidata)
     .bind(&wikipedia)
+    .bind(req.placeholder)
     .fetch_one(&mut *tx)
     .await
     .map_err(pois::map_duplicate)?;
@@ -273,6 +284,7 @@ async fn update_poi(
         None => cur.name,
     };
     let category = req.category.unwrap_or(cur.category);
+    let placeholder = category == Category::Lodging && req.placeholder.unwrap_or(cur.placeholder);
     let (lat, lon) = (req.lat.unwrap_or(cur.lat), req.lon.unwrap_or(cur.lon));
     validate::coordinates(lat, lon)?;
     let address = match req.address {
@@ -313,7 +325,8 @@ async fn update_poi(
         "UPDATE pois SET name = $4, category = $5,
              location = ST_SetSRID(ST_MakePoint($6, $7), 4326)::geography,
              address = $8, duration_min = $9, opening_hours = $10, website = $11, notes = $12,
-             phone = $13, email = $14, wikidata = $15, wikipedia = $16, version = version + 1
+             phone = $13, email = $14, wikidata = $15, wikipedia = $16, placeholder = $17,
+             version = version + 1
          WHERE id = $1 AND trip_id = $2 AND version = $3",
     )
     .bind(poi_id)
@@ -332,6 +345,7 @@ async fn update_poi(
     .bind(&email)
     .bind(&wikidata)
     .bind(&wikipedia)
+    .bind(placeholder)
     .execute(&state.db)
     .await?;
     if updated.rows_affected() == 0 {

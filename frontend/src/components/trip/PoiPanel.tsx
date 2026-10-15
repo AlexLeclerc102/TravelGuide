@@ -152,7 +152,10 @@ export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeCh
                     {t.categoryIcons[p.category]}
                   </span>
                   <span className="poi-text">
-                    <strong>{p.name}</strong>
+                    <strong>
+                      {p.name}
+                      {p.placeholder && <span className="tag tag-area"> {t.pois.areaTag}</span>}
+                    </strong>
                     <span className="muted small">
                       {t.categories[p.category]} · {t.pois.minutes(p.duration_min)}
                     </span>

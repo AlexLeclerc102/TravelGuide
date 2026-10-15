@@ -19,6 +19,8 @@ pub struct Poi {
     pub trip_id: Uuid,
     pub name: String,
     pub category: Category,
+    /// Zone d'hébergement : hébergement encore à choisir (ville ou quartier approximatif).
+    pub placeholder: bool,
     pub lat: f64,
     pub lon: f64,
     pub address: String,
@@ -90,6 +92,7 @@ struct PoiRow {
     trip_id: Uuid,
     name: String,
     category: String,
+    placeholder: bool,
     lat: f64,
     lon: f64,
     address: String,
@@ -133,6 +136,7 @@ impl PoiRow {
             trip_id: self.trip_id,
             name: self.name,
             category: self.category.parse()?,
+            placeholder: self.placeholder,
             lat: self.lat,
             lon: self.lon,
             address: self.address,
@@ -169,7 +173,7 @@ fn to_u8(ratings: &[i16]) -> Vec<u8> {
 
 /// `$1` : utilisateur courant (pour `my_review`).
 const POI_SELECT: &str = "
-    SELECT p.id, p.trip_id, p.name, p.category,
+    SELECT p.id, p.trip_id, p.name, p.category, p.placeholder,
            ST_Y(p.location::geometry) AS lat, ST_X(p.location::geometry) AS lon,
            p.address, p.duration_min, p.opening_hours, p.country_code, p.website,
            p.phone, p.email, p.wikidata, p.wikipedia, p.notes,

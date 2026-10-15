@@ -69,6 +69,8 @@ export interface Poi {
   trip_id: string
   name: string
   category: Category
+  /** Zone d'hébergement : hébergement encore à choisir (ville ou quartier approximatif). */
+  placeholder: boolean
   lat: number
   lon: number
   address: string
@@ -98,6 +100,7 @@ export interface Poi {
 export interface PoiInput {
   name: string
   category: Category
+  placeholder?: boolean
   lat: number
   lon: number
   address?: string

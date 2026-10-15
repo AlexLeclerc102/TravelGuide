@@ -16,6 +16,7 @@
 | Suppression de compte | Voyages transférés au plus ancien éditeur, sinon supprimés ; avis supprimés ; POI conservés sans auteur. |
 | Langue | Français, chaînes regroupées dans `frontend/src/i18n/`. |
 | Départ du jour | Hébergement optionnel par jour (`trip_days.base_poi_id`), point de départ et d'arrivée. |
+| Hébergement à choisir | Zone d'hébergement (`pois.placeholder`, catégorie `lodging`) : une ville sert de départ et d'arrivée approximatifs, puis est remplacée par l'hôtel retenu. Recherche Booking.com / Airbnb par simples liens, sans affiliation. |
 | Fuseau | `America/Costa_Rica` par défaut (UTC−6, sans heure d'été). |
 | Requêtes SQL | `sqlx::query_as` (sans macros vérifiées à la compilation) : pas besoin de base pour compiler ni de cache `.sqlx` ; couverture par les tests d'intégration. |
 
@@ -166,6 +167,19 @@
   option, l'option retenue, son tracé GeoJSON et `has_estimates`). 60 calculs / min par utilisateur.
 - **Interface** : onglet « Transports » (modes et hébergement de chaque jour, comparaison d'un
   trajet entre deux lieux, tracé retenu affiché sur la carte, estimations marquées « ≈ »).
+
+## Séjours et zones d'hébergement
+
+- **Séjour** : suite de nuits consécutives au même hébergement (l'hébergement d'un jour est celui
+  de sa nuit). `PUT /trips/{id}/stays` règle les nuits `first_night`…`last_night` sans toucher aux
+  modes ; `POST /trips/{id}/stays/replace` remplace un hébergement par un autre sur toutes ses
+  nuits et supprime la zone remplacée si demandé (jamais un lieu qui n'est pas une zone).
+- **Zone d'hébergement** (migration 0010) : lieu `lodging` marqué `placeholder`, créé depuis une
+  ville trouvée par la recherche de lieux. Contrainte en base : seule une catégorie `lodging`
+  peut être une zone ; changer de catégorie retire le statut.
+- **Interface** (onglet Transports, section « Séjours ») : liste des séjours (zones en pointillés),
+  liens de recherche Booking.com et Airbnb avec les dates d'arrivée et de départ et le nombre de
+  membres, sans affiliation ni suivi ; « Remplacer par… » parmi les hébergements du voyage.
 
 ## Itinéraire (incrément 6)
 

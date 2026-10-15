@@ -165,6 +165,15 @@ button.danger-outline { color: var(--error); border-color: var(--error); }
 .poi-editor h3, .poi-details h3 { margin: 0; }
 .poi-details { display: grid; gap: 0.4rem; }
 .poi-details p { margin: 0; }
+.stay-list { list-style: none; margin: 0.6rem 0; padding: 0; display: grid; gap: 0.5rem; }
+.stay-row { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.7rem; display: grid; gap: 0.25rem; }
+.stay-row.area { border-style: dashed; }
+.stay-head { display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; align-items: baseline; justify-content: space-between; }
+.stay-row p, .stay-row label { margin: 0; }
+.tag-area { font-weight: normal; color: var(--accent); margin-left: 0.3rem; }
+.form label.checkbox { display: flex; flex-direction: row; align-items: center; gap: 0.4rem; }
+.add-stay summary { cursor: pointer; font-weight: 600; }
+.add-stay .form { margin-top: 0.5rem; }
 .wiki-card { margin-top: 0.6rem; }
 .wiki-card figure { margin: 0 0 0.4rem; }
 .wiki-card img { display: block; width: 100%; height: auto; max-height: 220px; object-fit: cover; border-radius: 6px; }

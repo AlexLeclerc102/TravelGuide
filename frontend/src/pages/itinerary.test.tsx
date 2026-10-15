@@ -34,6 +34,7 @@ function poi(id: string, name: string, category: Poi['category'] = 'sight'): Poi
     trip_id: 'trip-1',
     name,
     category,
+    placeholder: false,
     lat: 9.93,
     lon: -84.07,
     address: '',

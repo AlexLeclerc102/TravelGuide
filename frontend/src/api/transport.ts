@@ -1,5 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from './client'
+import { poiKeys } from './pois'
 import { tripKeys, type TransportMode } from './trips'
 
 /** Un jour du voyage avec ses réglages effectifs. */
@@ -73,6 +74,37 @@ export function useUpdateTripDay(tripId: string) {
     },
   })
 }
+
+/** Hébergement d'une suite de nuits (`poi_id` nul : aucun). */
+export interface StayInput {
+  poi_id: string | null
+  first_night: string
+  last_night: string
+}
+
+export interface ReplaceStayInput {
+  from_poi_id: string
+  to_poi_id: string
+  /** Supprime ensuite la zone d'hébergement remplacée. */
+  remove_from?: boolean
+}
+
+function useDaysMutation<T>(tripId: string, path: string, method: string, poisChanged: (input: T) => boolean = () => false) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: T) => apiFetch<TripDay[]>(`/trips/${tripId}/${path}`, json(method, input)),
+    onSuccess: (days, input) => {
+      qc.setQueryData(transportKeys.days(tripId), days)
+      qc.invalidateQueries({ queryKey: tripKeys.itinerary(tripId) })
+      if (poisChanged(input)) qc.invalidateQueries({ queryKey: poiKeys.list(tripId) })
+    },
+  })
+}
+
+export const useSetStay = (tripId: string) => useDaysMutation<StayInput>(tripId, 'stays', 'PUT')
+
+export const useReplaceStay = (tripId: string) =>
+  useDaysMutation<ReplaceStayInput>(tripId, 'stays/replace', 'POST', (input) => !!input.remove_from)
 
 /** Trajets entre des lieux (au moins deux) ; `null` : rien à calculer. */
 export const useRoutePlan = (tripId: string, req: RouteRequest | null) =>

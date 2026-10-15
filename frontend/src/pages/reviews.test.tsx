@@ -30,6 +30,7 @@ function poi(id: string, name: string, rating: GroupRating = noRating, extra: Pa
     trip_id: 'trip-1',
     name,
     category: 'nature',
+    placeholder: false,
     lat: 10.46,
     lon: -84.7,
     address: '',
