@@ -14,6 +14,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use api::mail::MemoryMailer;
+use api::places::{Category, OsmRef, OsmType, Place, PlaceService, StaticPlaces};
 
 pub const ORIGIN: &str = "http://localhost:5173";
 pub const PASSWORD: &str = "motdepasse-solide";
@@ -22,6 +23,8 @@ pub struct TestApp {
     pub router: Router,
     pub db: PgPool,
     pub mailer: Arc<MemoryMailer>,
+    /// Faux fournisseur de lieux (compte les appels).
+    pub places: Arc<StaticPlaces>,
 }
 
 pub struct Response {
@@ -37,8 +40,19 @@ impl TestApp {
 
     pub fn with_config(db: PgPool, config: api::config::Config) -> Self {
         let mailer = Arc::new(MemoryMailer::default());
-        let router = api::build_app(db.clone(), config, mailer.clone());
-        Self { router, db, mailer }
+        let places = Arc::new(StaticPlaces::new(sample_places()));
+        let router = api::build_app(
+            db.clone(),
+            config,
+            mailer.clone(),
+            Arc::new(PlaceService::new(places.clone())),
+        );
+        Self {
+            router,
+            db,
+            mailer,
+            places,
+        }
     }
 
     /// Envoie une requête ; `session` est la valeur du cookie de session éventuel.
@@ -192,4 +206,40 @@ pub fn session_token(res: &Response) -> Option<String> {
     let cookie = res.set_cookie.as_ref()?;
     let value = cookie.strip_prefix("tg_session=")?.split(';').next()?;
     (!value.is_empty()).then(|| value.to_owned())
+}
+
+/// Lieux renvoyés par le faux fournisseur.
+pub fn sample_places() -> Vec<Place> {
+    vec![
+        Place {
+            name: "Museo Nacional de Costa Rica".into(),
+            display_name: "Museo Nacional de Costa Rica, San José, Costa Rica".into(),
+            lat: 9.9327,
+            lon: -84.0716,
+            category: Category::Museum,
+            osm_tag: "tourism=museum".into(),
+            osm: Some(OsmRef {
+                osm_type: OsmType::Relation,
+                id: 4144800,
+            }),
+            opening_hours: Some("Tu-Sa 08:30-16:30; Su 09:00-16:30".into()),
+            website: Some("https://www.museocostarica.go.cr".into()),
+            country_code: Some("CR".into()),
+        },
+        Place {
+            name: "Volcán Arenal".into(),
+            display_name: "Volcán Arenal, La Fortuna, Costa Rica".into(),
+            lat: 10.4621,
+            lon: -84.7034,
+            category: Category::Nature,
+            osm_tag: "natural=volcano".into(),
+            osm: Some(OsmRef {
+                osm_type: OsmType::Node,
+                id: 276216895,
+            }),
+            opening_hours: None,
+            website: None,
+            country_code: Some("CR".into()),
+        },
+    ]
 }

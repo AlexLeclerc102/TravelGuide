@@ -33,6 +33,9 @@ pub enum AppError {
     AccountExists,
     #[error("trop de tentatives, réessayez plus tard")]
     TooManyRequests,
+    /// Service externe indisponible ou saturé (message affichable).
+    #[error("{0}")]
+    ServiceUnavailable(String),
     #[error(transparent)]
     Database(#[from] sqlx::Error),
     #[error(transparent)]
@@ -52,6 +55,7 @@ impl IntoResponse for AppError {
             AppError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             AppError::AccountExists => (StatusCode::CONFLICT, "account_exists"),
             AppError::TooManyRequests => (StatusCode::TOO_MANY_REQUESTS, "too_many_requests"),
+            AppError::ServiceUnavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
             AppError::Database(sqlx::Error::RowNotFound) => (StatusCode::NOT_FOUND, "not_found"),
             AppError::Database(_) | AppError::Internal(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal")

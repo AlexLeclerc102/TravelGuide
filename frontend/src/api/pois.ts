@@ -1,0 +1,184 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { apiFetch } from './client'
+import { tripKeys } from './trips'
+
+export type Category = 'sight' | 'nature' | 'museum' | 'food' | 'activity' | 'lodging' | 'shopping' | 'other'
+export const ALL_CATEGORIES: Category[] = ['sight', 'nature', 'museum', 'food', 'activity', 'lodging', 'shopping', 'other']
+
+/** Durées types (minutes), identiques à celles du backend. */
+export const DEFAULT_DURATION: Record<Category, number> = {
+  sight: 60,
+  nature: 150,
+  museum: 90,
+  food: 75,
+  activity: 120,
+  lodging: 0,
+  shopping: 45,
+  other: 60,
+}
+
+export interface OsmRef {
+  type: 'node' | 'way' | 'relation'
+  id: number
+}
+
+/** Lieu trouvé dans OpenStreetMap. */
+export interface Place {
+  name: string
+  display_name: string
+  lat: number
+  lon: number
+  category: Category
+  osm_tag: string
+  osm: OsmRef | null
+  opening_hours: string | null
+  website: string | null
+  country_code: string | null
+}
+
+export type HoursStatus = 'none' | 'valid' | 'invalid'
+
+export interface Poi {
+  id: string
+  trip_id: string
+  name: string
+  category: Category
+  lat: number
+  lon: number
+  address: string
+  duration_min: number
+  opening_hours: string | null
+  opening_hours_status: HoursStatus
+  closed_dates: string[]
+  country_code: string | null
+  website: string | null
+  notes: string
+  osm: OsmRef | null
+  version: number
+  created_by: string | null
+  created_by_name: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PoiInput {
+  name: string
+  category: Category
+  lat: number
+  lon: number
+  address?: string
+  duration_min?: number
+  opening_hours?: string
+  country_code?: string | null
+  website?: string
+  notes?: string
+  osm?: OsmRef | null
+}
+
+export interface OpeningInterval {
+  start: string
+  end: string
+  unknown: boolean
+  comment?: string
+}
+
+export interface DaySchedule {
+  date: string
+  intervals: OpeningInterval[]
+  holiday: boolean
+}
+
+export interface OpeningPreview {
+  status: HoursStatus
+  error: string | null
+  days: DaySchedule[]
+}
+
+/** Zone affichée : `[minLon, minLat, maxLon, maxLat]`. */
+export type Bounds = [number, number, number, number]
+
+const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) })
+
+export const poiKeys = {
+  list: (tripId: string) => [...tripKeys.one(tripId), 'pois'] as const,
+  opening: (tripId: string, value: string, country: string | null) =>
+    [...tripKeys.one(tripId), 'opening', value, country] as const,
+}
+
+/** Prépare l'ajout d'un lieu OSM avec les valeurs par défaut de sa catégorie. */
+export function placeToInput(place: Place, name = place.name): PoiInput {
+  return {
+    name,
+    category: place.category,
+    lat: place.lat,
+    lon: place.lon,
+    address: place.display_name,
+    duration_min: DEFAULT_DURATION[place.category],
+    opening_hours: place.opening_hours ?? undefined,
+    country_code: place.country_code,
+    website: place.website ?? undefined,
+    osm: place.osm,
+  }
+}
+
+export const sameOsm = (a: OsmRef | null, b: OsmRef | null) => !!a && !!b && a.type === b.type && a.id === b.id
+
+export const usePois = (tripId: string) =>
+  useQuery({ queryKey: poiKeys.list(tripId), queryFn: () => apiFetch<Poi[]>(`/trips/${tripId}/pois`) })
+
+export function useCreatePoi(tripId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: PoiInput) => apiFetch<Poi>(`/trips/${tripId}/pois`, json('POST', input)),
+    onSuccess: (poi) => qc.setQueryData<Poi[]>(poiKeys.list(tripId), (list) => [...(list ?? []), poi]),
+  })
+}
+
+export function useUpdatePoi(tripId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...patch }: Partial<PoiInput> & { id: string; version: number }) =>
+      apiFetch<Poi>(`/trips/${tripId}/pois/${id}`, json('PATCH', patch)),
+    onSuccess: (poi) =>
+      qc.setQueryData<Poi[]>(poiKeys.list(tripId), (list) => list?.map((p) => (p.id === poi.id ? poi : p))),
+    // Conflit de version : on recharge la liste à jour.
+    onError: () => qc.invalidateQueries({ queryKey: poiKeys.list(tripId) }),
+  })
+}
+
+export function useDeletePoi(tripId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiFetch<void>(`/trips/${tripId}/pois/${id}`, { method: 'DELETE' }),
+    onSuccess: (_, id) => qc.setQueryData<Poi[]>(poiKeys.list(tripId), (list) => list?.filter((p) => p.id !== id)),
+  })
+}
+
+/** Recherche déclenchée explicitement (pas d'autocomplétion : politique d'usage de Nominatim). */
+export const usePlaceSearch = (query: string, bounds: Bounds | null) =>
+  useQuery({
+    queryKey: ['places', query, bounds],
+    queryFn: () => {
+      const params = new URLSearchParams({ q: query })
+      if (bounds) params.set('viewbox', bounds.map((n) => n.toFixed(4)).join(','))
+      return apiFetch<Place[]>(`/places/search?${params}`)
+    },
+    enabled: query.length >= 2,
+    staleTime: Infinity,
+    retry: false,
+  })
+
+export const reverseGeocode = (lat: number, lon: number) =>
+  apiFetch<{ place: Place | null }>(`/places/reverse?lat=${lat.toFixed(6)}&lon=${lon.toFixed(6)}`)
+
+export const useOpeningPreview = (tripId: string, value: string, country: string | null) =>
+  useQuery({
+    queryKey: poiKeys.opening(tripId, value, country),
+    queryFn: () =>
+      apiFetch<OpeningPreview>(
+        `/trips/${tripId}/opening-hours/preview`,
+        json('POST', { opening_hours: value, country_code: country }),
+      ),
+    enabled: value.trim().length > 0,
+    staleTime: Infinity,
+  })

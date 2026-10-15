@@ -4,6 +4,7 @@ use sqlx::PgPool;
 
 use crate::config::Config;
 use crate::mail::Mailer;
+use crate::places::PlaceService;
 use crate::rate_limit::RateLimiter;
 
 /// État partagé entre tous les handlers.
@@ -13,4 +14,5 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub mailer: Arc<dyn Mailer>,
     pub rate_limiter: Arc<RateLimiter>,
+    pub places: Arc<PlaceService>,
 }

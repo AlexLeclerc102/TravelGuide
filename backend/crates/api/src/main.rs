@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use api::mail::{LogMailer, Mailer, SmtpMailer};
+use api::places::nominatim::Nominatim;
+use api::places::PlaceService;
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
 
@@ -34,8 +36,16 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    if config.nominatim_contact.is_none() {
+        tracing::warn!("NOMINATIM_CONTACT absent : renseignez un contact pour respecter la politique d'usage de Nominatim");
+    }
+    let places = Arc::new(PlaceService::new(Nominatim::new(
+        &config.nominatim_url,
+        &config.user_agent(),
+    )?));
+
     let addr = config.bind_addr;
-    let app = api::build_app(db, config, mailer);
+    let app = api::build_app(db, config, mailer, places);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "API démarrée");
     axum::serve(

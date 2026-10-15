@@ -15,6 +15,9 @@ base64 = { workspace = true }
 lettre = { workspace = true }
 rand = { workspace = true }
 sha2 = { workspace = true }
+chrono = { workspace = true }
+opening-hours = { workspace = true }
+reqwest = { workspace = true }
 axum = { workspace = true }
 dotenvy = { workspace = true }
 serde = { workspace = true }
@@ -33,4 +36,5 @@ utoipa-scalar = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 http-body-util = { workspace = true }

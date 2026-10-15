@@ -7,6 +7,9 @@ pub mod config;
 pub mod csrf;
 pub mod error;
 pub mod mail;
+pub mod opening;
+pub mod places;
+pub mod pois;
 pub mod rate_limit;
 pub mod routes;
 pub mod state;
@@ -27,6 +30,7 @@ use utoipa_scalar::{Scalar, Servable};
 
 use crate::config::Config;
 use crate::mail::Mailer;
+use crate::places::PlaceService;
 use crate::rate_limit::RateLimiter;
 use crate::state::AppState;
 
@@ -43,7 +47,12 @@ struct ApiDoc;
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
 /// Construit l'application Axum complète (utilisée par `main` et par les tests).
-pub fn build_app(db: PgPool, config: Config, mailer: Arc<dyn Mailer>) -> Router {
+pub fn build_app(
+    db: PgPool,
+    config: Config,
+    mailer: Arc<dyn Mailer>,
+    places: Arc<PlaceService>,
+) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(HeaderValue::from_str(&config.public_origin).expect("PUBLIC_ORIGIN invalide"))
         .allow_credentials(true)
@@ -61,6 +70,7 @@ pub fn build_app(db: PgPool, config: Config, mailer: Arc<dyn Mailer>) -> Router 
         config: Arc::new(config),
         mailer,
         rate_limiter: Arc::new(RateLimiter::default()),
+        places,
     };
 
     let (api, openapi) = OpenApiRouter::with_openapi(ApiDoc::openapi())

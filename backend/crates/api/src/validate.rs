@@ -96,10 +96,133 @@ pub fn day_window(start: time::Time, end: time::Time) -> Result<(), AppError> {
     }
 }
 
+/// Texte libre borné (sans caractères de contrôle hormis les sauts de ligne).
+fn bounded_text(raw: &str, min: usize, max: usize, what: &str) -> Result<String, AppError> {
+    let v = raw.trim();
+    let len = v.chars().count();
+    let clean = !v.chars().any(|c| c.is_control() && c != '\n' && c != '\t');
+    if (min..=max).contains(&len) && clean {
+        Ok(v.to_owned())
+    } else if min > 0 {
+        Err(AppError::BadRequest(format!(
+            "{what} doit contenir entre {min} et {max} caractères"
+        )))
+    } else {
+        Err(AppError::BadRequest(format!(
+            "{what} ne doit pas dépasser {max} caractères"
+        )))
+    }
+}
+
+pub fn poi_name(raw: &str) -> Result<String, AppError> {
+    let name = bounded_text(raw, 1, 200, "le nom du lieu")?;
+    if name.contains('\n') {
+        return Err(AppError::BadRequest(
+            "le nom du lieu tient sur une ligne".into(),
+        ));
+    }
+    Ok(name)
+}
+
+pub fn address(raw: &str) -> Result<String, AppError> {
+    bounded_text(raw, 0, 500, "l'adresse")
+}
+
+pub fn notes(raw: &str) -> Result<String, AppError> {
+    bounded_text(raw, 0, 2000, "les notes")
+}
+
+/// Coordonnées WGS84 finies et dans les bornes.
+pub fn coordinates(lat: f64, lon: f64) -> Result<(), AppError> {
+    if (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest("coordonnées invalides".into()))
+    }
+}
+
+/// Durée de visite en minutes (0 à 12 h).
+pub fn duration_min(v: i32) -> Result<i32, AppError> {
+    if (0..=720).contains(&v) {
+        Ok(v)
+    } else {
+        Err(AppError::BadRequest(
+            "la durée doit être comprise entre 0 et 720 minutes".into(),
+        ))
+    }
+}
+
+/// Site web : lien http(s) uniquement (pas de `javascript:`), vide => aucun.
+pub fn website(raw: Option<&str>) -> Result<Option<String>, AppError> {
+    let Some(v) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    let ok = (v.starts_with("https://") || v.starts_with("http://"))
+        && v.len() <= 500
+        && !v.chars().any(|c| c.is_whitespace() || c.is_control());
+    if ok {
+        Ok(Some(v.to_owned()))
+    } else {
+        Err(AppError::BadRequest(
+            "le site web doit être un lien http(s) valide".into(),
+        ))
+    }
+}
+
+/// Code pays ISO à deux lettres, mis en majuscules ; vide => aucun.
+pub fn country_code(raw: Option<&str>) -> Result<Option<String>, AppError> {
+    let Some(v) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    if v.len() == 2 && v.chars().all(|c| c.is_ascii_alphabetic()) {
+        Ok(Some(v.to_ascii_uppercase()))
+    } else {
+        Err(AppError::BadRequest("code pays invalide".into()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use time::macros::{date, time};
+
+    #[test]
+    fn poi_fields() {
+        assert_eq!(poi_name("  Arenal ").unwrap(), "Arenal");
+        assert!(poi_name("").is_err());
+        assert!(poi_name("a\nb").is_err());
+        assert!(poi_name(&"x".repeat(201)).is_err());
+        assert_eq!(notes("ligne 1\nligne 2").unwrap(), "ligne 1\nligne 2");
+        assert!(notes(&"x".repeat(2001)).is_err());
+        assert!(coordinates(9.9, -84.1).is_ok());
+        for (lat, lon) in [
+            (91.0, 0.0),
+            (0.0, -181.0),
+            (f64::NAN, 0.0),
+            (0.0, f64::INFINITY),
+        ] {
+            assert!(coordinates(lat, lon).is_err(), "{lat},{lon}");
+        }
+        assert!(duration_min(0).is_ok() && duration_min(720).is_ok());
+        assert!(duration_min(-1).is_err() && duration_min(721).is_err());
+    }
+
+    #[test]
+    fn website_and_country() {
+        assert_eq!(website(Some(" ")).unwrap(), None);
+        assert!(website(Some("https://example.cr")).unwrap().is_some());
+        for bad in [
+            "javascript:alert(1)",
+            "ftp://x",
+            "https://a b.cr",
+            "example.cr",
+        ] {
+            assert!(website(Some(bad)).is_err(), "{bad}");
+        }
+        assert_eq!(country_code(Some("cr")).unwrap().as_deref(), Some("CR"));
+        assert!(country_code(Some("CRI")).is_err());
+        assert!(country_code(Some("1A")).is_err());
+    }
 
     #[test]
     fn trip_dates_bounds() {

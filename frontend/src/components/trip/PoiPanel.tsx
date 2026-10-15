@@ -1,0 +1,226 @@
+import { useState, type FormEvent } from 'react'
+import { errorMessage } from '../../api/errors'
+import {
+  placeToInput,
+  sameOsm,
+  useCreatePoi,
+  usePlaceSearch,
+  type Bounds,
+  type Poi,
+  type PoiInput,
+} from '../../api/pois'
+import type { Trip } from '../../api/trips'
+import { t } from '../../i18n/fr'
+import { formatDate } from '../../lib/format'
+import { PoiDetails, PoiEditor } from './PoiEditor'
+
+export type Selection = { kind: 'poi'; id: string } | { kind: 'draft'; draft: PoiInput } | null
+
+interface Props {
+  trip: Trip
+  pois: Poi[]
+  selection: Selection
+  onSelect: (selection: Selection) => void
+  addMode: boolean
+  onAddModeChange: (on: boolean) => void
+  locating: boolean
+  locateError: unknown
+  bounds: Bounds | null
+}
+
+function closedSummary(dates: string[]) {
+  const shown = dates.slice(0, 3).map((d) => formatDate(d, { weekday: 'short', day: 'numeric', month: 'short' }))
+  return t.pois.closedOn(shown.join(', ') + (dates.length > 3 ? '…' : ''))
+}
+
+export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeChange, locating, locateError, bounds }: Props) {
+  const canEdit = trip.my_role !== 'viewer'
+  const selectedPoi = selection?.kind === 'poi' ? pois.find((p) => p.id === selection.id) : undefined
+
+  return (
+    <div className="poi-panel">
+      {canEdit && (
+        <PlaceSearch
+          trip={trip}
+          pois={pois}
+          bounds={bounds}
+          onAdded={(poi) => onSelect({ kind: 'poi', id: poi.id })}
+          onSelectExisting={(id) => onSelect({ kind: 'poi', id })}
+        />
+      )}
+      {canEdit && (
+        <div className="click-mode">
+          <button type="button" aria-pressed={addMode} onClick={() => onAddModeChange(!addMode)}>
+            📍 {t.pois.clickMode}
+          </button>
+          {addMode && <p className="hint">{t.pois.clickModeOn}</p>}
+          {locating && <p className="muted small">{t.pois.locating}</p>}
+          {locateError != null && (
+            <p className="error" role="alert">
+              {errorMessage(locateError)}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Le formulaire attend le géocodage inverse, qui préremplit ses valeurs initiales. */}
+      {selection?.kind === 'draft' && !locating && (
+        <section className="card selected-card">
+          <PoiEditor
+            key={`${selection.draft.lat},${selection.draft.lon}`}
+            tripId={trip.id}
+            draft={selection.draft}
+            onSaved={(poi) => onSelect({ kind: 'poi', id: poi.id })}
+            onClose={() => onSelect(null)}
+          />
+        </section>
+      )}
+      {selectedPoi && (
+        <section className="card selected-card">
+          {canEdit ? (
+            <PoiEditor
+              key={`${selectedPoi.id}:${selectedPoi.version}`}
+              tripId={trip.id}
+              poi={selectedPoi}
+              onSaved={() => undefined}
+              onClose={() => onSelect(null)}
+            />
+          ) : (
+            <PoiDetails tripId={trip.id} poi={selectedPoi} onClose={() => onSelect(null)} />
+          )}
+        </section>
+      )}
+
+      <section>
+        <h2 className="section-title">{t.pois.listTitle(pois.length)}</h2>
+        {pois.length === 0 ? (
+          <p className="muted small">
+            {t.pois.empty} {canEdit && t.pois.emptyEditor}
+          </p>
+        ) : (
+          <ul className="poi-list">
+            {pois.map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  className={`poi-item${selectedPoi?.id === p.id ? ' active' : ''}`}
+                  onClick={() => onSelect({ kind: 'poi', id: p.id })}
+                >
+                  <span className="poi-icon" aria-hidden>
+                    {t.categoryIcons[p.category]}
+                  </span>
+                  <span className="poi-text">
+                    <strong>{p.name}</strong>
+                    <span className="muted small">
+                      {t.categories[p.category]} · {t.pois.minutes(p.duration_min)}
+                    </span>
+                    {p.closed_dates.length > 0 && <span className="small warning-text">{closedSummary(p.closed_dates)}</span>}
+                    {p.opening_hours_status === 'invalid' && <span className="small warning-text">{t.pois.hoursInvalid}</span>}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function PlaceSearch({
+  trip,
+  pois,
+  bounds,
+  onAdded,
+  onSelectExisting,
+}: {
+  trip: Trip
+  pois: Poi[]
+  bounds: Bounds | null
+  onAdded: (poi: Poi) => void
+  onSelectExisting: (id: string) => void
+}) {
+  const [text, setText] = useState('')
+  // La recherche part à la validation du formulaire, avec la zone affichée à ce moment-là.
+  const [submitted, setSubmitted] = useState<{ q: string; bounds: Bounds | null }>({ q: '', bounds: null })
+  const search = usePlaceSearch(submitted.q, submitted.bounds)
+  const create = useCreatePoi(trip.id)
+
+  function submit(e: FormEvent) {
+    e.preventDefault()
+    setSubmitted({ q: text.trim(), bounds })
+  }
+
+  return (
+    <section className="place-search">
+      <form className="row" onSubmit={submit} role="search">
+        <label className="sr-only" htmlFor="place-search">
+          {t.pois.searchLabel}
+        </label>
+        <input
+          id="place-search"
+          type="search"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={t.pois.searchPlaceholder}
+          minLength={2}
+          maxLength={200}
+        />
+        <button type="submit" disabled={text.trim().length < 2 || search.isFetching}>
+          {search.isFetching ? t.pois.searching : t.pois.search}
+        </button>
+      </form>
+      {search.error && (
+        <p className="error" role="alert">
+          {errorMessage(search.error)}
+        </p>
+      )}
+      {create.error && (
+        <p className="error" role="alert">
+          {errorMessage(create.error)}
+        </p>
+      )}
+      {search.data && (
+        <>
+          {search.data.length === 0 ? (
+            <p className="muted small">{t.pois.noResults}</p>
+          ) : (
+            <ul className="result-list" aria-label={t.pois.searchLabel}>
+              {search.data.map((place, i) => {
+                const existing = pois.find((p) => sameOsm(p.osm, place.osm))
+                const name = place.name || place.display_name.split(',')[0]
+                return (
+                  <li key={place.osm ? `${place.osm.type}${place.osm.id}` : i}>
+                    <span className="poi-icon" aria-hidden>
+                      {t.categoryIcons[place.category]}
+                    </span>
+                    <span className="poi-text">
+                      <strong>{name}</strong>
+                      <span className="muted small">{place.display_name}</span>
+                    </span>
+                    {existing ? (
+                      <button type="button" className="small-button" onClick={() => onSelectExisting(existing.id)}>
+                        {t.pois.added}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="small-button primary"
+                        disabled={create.isPending}
+                        aria-label={`${t.pois.add} ${name}`}
+                        onClick={() => create.mutate(placeToInput(place, name), { onSuccess: onAdded })}
+                      >
+                        {t.pois.add}
+                      </button>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          <p className="muted tiny">{t.pois.attribution}</p>
+        </>
+      )}
+    </section>
+  )
+}

@@ -10,7 +10,7 @@ l'organisateur paie, les invités rejoignent gratuitement.
 ## Démarrage rapide
 
 ```bash
-cp .env.example .env          # puis changer les mots de passe
+cp .env.example .env          # puis changer les mots de passe et NOMINATIM_CONTACT
 docker compose up --build
 ```
 
@@ -21,6 +21,8 @@ docker compose up --build
 | OpenAPI   | http://localhost:8080/api/openapi.json |
 | Emails    | http://localhost:8025 (Mailpit)  |
 | Valhalla  | http://localhost:8002            |
+
+Si un PostgreSQL local occupe déjà le port 5432, changez `DB_PORT` dans `.env`.
 
 Au premier démarrage, Valhalla télécharge l'extrait OSM du Costa Rica et construit ses tuiles
 (quelques minutes). L'API fonctionne sans lui (repli à vol d'oiseau, signalé dans l'interface).

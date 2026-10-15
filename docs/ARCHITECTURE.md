@@ -7,7 +7,7 @@
 | Routage marche/vélo/voiture | Valhalla auto-hébergé (MIT), extrait OSM Costa Rica. Repli à vol d'oiseau derrière le trait `RoutingProvider`. |
 | Transports en commun | Pas de GTFS exploitable au Costa Rica, Navitia ne le couvre pas : approximation (temps voiture × 1,8 + 15 min) clairement signalée « estimation ». |
 | Recherche de lieux | Nominatim public via le backend (cache, 1 req/s, User-Agent identifié, pas d'autocomplétion). Auto-hébergement prévu avant production. |
-| Détails POI | Overpass (tags `opening_hours`, `tourism`, `amenity`), interprétation avec la crate `opening-hours`. |
+| Détails POI | Tags OSM fournis par Nominatim (`extratags` : `opening_hours`, `website`), interprétés avec la crate `opening-hours`. Overpass n'apporte rien de plus pour le MVP (révisé à l'incrément 3). |
 | Fond de carte | OpenFreeMap (tuiles vectorielles, sans clé). |
 | Authentification | Mot de passe (Argon2id) + lien magique (SMTP, Mailpit en dev). Sessions en base, cookie HttpOnly. |
 | Invités | Le lien d'invitation demande prénom + email : compte sans mot de passe créé et connecté immédiatement. |
@@ -65,3 +65,38 @@
 - **Suppression de compte** : transfert de chaque voyage organisé à l'éditeur le plus ancien, sinon
   suppression du voyage (les lecteurs ne reçoivent pas l'organisation).
 - **Reporté** : `trip_days` (modes et hébergement par jour) arrive avec l'incrément transports.
+
+## Points d'intérêt (incrément 3)
+
+- **Table `pois`** : coordonnées en `geography(Point, 4326)` (index GiST), catégorie parmi
+  `sight, nature, museum, food, activity, lodging, shopping, other`, durée de visite 0–720 min
+  (durée type par catégorie, 0 pour un hébergement), horaires OSM bruts, code pays, site web
+  (http(s) uniquement), notes, référence OSM. Un même objet OSM n'est ajouté qu'une fois par
+  voyage (index unique partiel, **409**). Au plus 300 POI par voyage (borne l'algorithme).
+- **Droits** : lecture pour tous les membres, ajout / modification / suppression pour éditeur et
+  organisateur (y compris les POI ajoutés par d'autres). Verrouillage optimiste (`pois.version`).
+  Un POI n'est accessible que via son voyage (`/trips/{trip}/pois/{poi}` : 404 sinon).
+- **Recherche de lieux** (`GET /places/search`, `GET /places/reverse`) : réservée aux comptes
+  connectés, relayée vers Nominatim derrière le trait `PlaceProvider`. Politique d'usage
+  respectée : User-Agent avec contact (`NOMINATIM_CONTACT`), **une requête par seconde au plus**
+  pour toute l'instance (créneaux réservés ; refus **503** au-delà de 5 s d'attente), pas
+  d'autocomplétion (recherche à la validation), attribution ODbL affichée. Cache mémoire 24 h
+  (5 000 entrées, zone de recherche arrondie au dixième de degré). Limite : 30 requêtes / min
+  par utilisateur (**429**). La recherche privilégie la zone affichée (`viewbox`) sans l'imposer.
+- **Catégories** : déduites de la clé/valeur OSM principale (`tourism=museum` → musée,
+  `natural=*` → nature, etc.), modifiables par les membres.
+- **Horaires** : la syntaxe OSM est conservée telle quelle, même invalide (`opening_hours_status`
+  = `invalid`, signalé dans l'interface et ignoré par le futur planificateur). Interprétation en
+  heure locale sur chaque date du voyage, avec les **jours fériés du pays** du lieu (base embarquée
+  de la crate `opening-hours` ; ex. 1er et 25 décembre au Costa Rica). La liste renvoie les dates
+  de fermeture complète (`closed_dates`) ; `POST /trips/{id}/opening-hours/preview` détaille les
+  plages de chaque jour (vérification à la saisie, fiche d'un lieu). Les règles `unknown`
+  (« sur rendez-vous ») sont marquées incertaines.
+- **Ajout par clic** : géocodage inverse au point cliqué ; on garde les coordonnées du clic. Si
+  OSM y connaît un lieu nommé (hors rue / commune), nom, catégorie et horaires sont préremplis ;
+  sinon seule l'adresse l'est.
+- **RGPD** : l'export inclut les lieux ajoutés ; à la suppression du compte, ils restent dans les
+  voyages sans auteur.
+- **Carte** : le worker MapLibre est fourni explicitement (`setWorkerUrl` + import `?url`), sinon
+  il est introuvable sous Vite (fond de carte vide). Sans WebGL, un message remplace la carte et
+  la liste reste utilisable.

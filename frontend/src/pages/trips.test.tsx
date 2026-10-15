@@ -66,6 +66,7 @@ describe('voyages', () => {
       end_date: '2026-12-08',
       default_modes: ['car', 'walk'],
     })
+    fireEvent.click(screen.getByRole('tab', { name: 'Membres' }))
     expect(screen.getByRole('heading', { name: 'Invitations' })).toBeInTheDocument()
   })
 
@@ -79,7 +80,10 @@ describe('voyages', () => {
     })
     renderApp('/trips/trip-1')
     expect(await screen.findByRole('heading', { name: 'Pura Vida' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: 'Membres' }))
+    expect(screen.getByRole('heading', { name: 'Membres' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Invitations' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: 'Paramètres' }))
     expect(screen.queryByRole('heading', { name: 'Paramètres du voyage' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Quitter ce voyage' })).toBeInTheDocument()
   })

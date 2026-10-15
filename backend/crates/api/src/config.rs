@@ -19,6 +19,10 @@ pub struct Config {
     pub mail_from: String,
     /// Abonnement simulé : emails recevant le plan `organizer` (`*` = tout le monde).
     pub organizer_emails: Vec<String>,
+    /// Instance Nominatim (recherche de lieux).
+    pub nominatim_url: String,
+    /// Contact (email ou URL) ajouté au User-Agent, exigé par la politique d'usage de Nominatim.
+    pub nominatim_contact: Option<String>,
 }
 
 impl Config {
@@ -45,6 +49,10 @@ impl Config {
                 .map(|s| s.trim().to_lowercase())
                 .filter(|s| !s.is_empty())
                 .collect(),
+            nominatim_url: optional("NOMINATIM_URL", "https://nominatim.openstreetmap.org"),
+            nominatim_contact: std::env::var("NOMINATIM_CONTACT")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
         })
     }
 
@@ -59,6 +67,8 @@ impl Config {
             smtp_url: None,
             mail_from: "TravelGuide <no-reply@travelguide.local>".into(),
             organizer_emails: vec![],
+            nominatim_url: String::new(),
+            nominatim_contact: None,
         }
     }
 
@@ -67,6 +77,15 @@ impl Config {
         self.organizer_emails
             .iter()
             .any(|e| e == "*" || e.eq_ignore_ascii_case(email))
+    }
+
+    /// User-Agent identifiant l'application auprès des services OpenStreetMap.
+    pub fn user_agent(&self) -> String {
+        let version = env!("CARGO_PKG_VERSION");
+        match &self.nominatim_contact {
+            Some(contact) => format!("TravelGuide/{version} ({contact})"),
+            None => format!("TravelGuide/{version} (+{})", self.public_origin),
+        }
     }
 
     pub fn is_allowed_origin(&self, origin: &str) -> bool {
