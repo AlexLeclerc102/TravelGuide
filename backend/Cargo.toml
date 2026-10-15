@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = ["crates/api", "crates/planner"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+publish = false
+
+[workspace.dependencies]
+planner = { path = "crates/planner" }
+anyhow = "1"
+axum = { version = "0.8", features = ["ws", "macros"] }
+dotenvy = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "time", "json", "migrate", "macros"] }
+thiserror = "2"
+time = { version = "0.3", features = ["serde", "serde-well-known", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "request-id", "limit"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+utoipa = { version = "5", features = ["axum_extras", "uuid", "time"] }
+utoipa-axum = "0.2"
+utoipa-scalar = { version = "0.3", features = ["axum"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+http-body-util = "0.1"

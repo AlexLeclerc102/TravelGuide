@@ -1,0 +1,29 @@
+[package]
+name = "api"
+description = "API REST + WebSocket de l'application de planification de voyage"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+planner = { workspace = true }
+anyhow = { workspace = true }
+axum = { workspace = true }
+dotenvy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+utoipa-scalar = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+http-body-util = { workspace = true }

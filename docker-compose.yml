@@ -1,0 +1,60 @@
+# Environnement de développement complet.
+#   cp .env.example .env && docker compose up --build
+# Frontend : http://localhost:5173 · API : http://localhost:8080/api/docs · Emails : http://localhost:8025
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports: ["5432:5432"]
+    volumes: [db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      retries: 10
+
+  # Capture les emails (liens magiques, invitations) en dev.
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["8025:8025", "1025:1025"]
+
+  # Moteur de routage marche / vélo / voiture. Au premier démarrage, il télécharge
+  # l'extrait OSM du Costa Rica (Geofabrik, ~70 Mo) et construit ses tuiles (quelques minutes).
+  valhalla:
+    image: ghcr.io/valhalla/valhalla-scripted:latest
+    environment:
+      tile_urls: https://download.geofabrik.de/central-america/costa-rica-latest.osm.pbf
+      use_tiles_ignore_pbf: "True"
+      build_admins: "True"
+      build_time_zones: "True"
+      serve_tiles: "True"
+      server_threads: "2"
+    ports: ["8002:8002"]
+    volumes: [valhalla-data:/custom_files]
+
+  backend:
+    build: ./backend
+    env_file: .env
+    ports: ["8080:8080"]
+    depends_on:
+      db: { condition: service_healthy }
+
+  frontend:
+    image: node:22-bookworm
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev"
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8080
+    ports: ["5173:5173"]
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+    depends_on: [backend]
+
+volumes:
+  db-data:
+  valhalla-data:
+  frontend-node-modules:
