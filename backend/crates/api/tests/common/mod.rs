@@ -32,8 +32,12 @@ pub struct Response {
 
 impl TestApp {
     pub fn new(db: PgPool) -> Self {
+        Self::with_config(db, api::config::Config::for_tests())
+    }
+
+    pub fn with_config(db: PgPool, config: api::config::Config) -> Self {
         let mailer = Arc::new(MemoryMailer::default());
-        let router = api::build_app(db.clone(), api::config::Config::for_tests(), mailer.clone());
+        let router = api::build_app(db.clone(), config, mailer.clone());
         Self { router, db, mailer }
     }
 
@@ -95,6 +99,77 @@ impl TestApp {
             .await;
         assert_eq!(res.status, StatusCode::CREATED, "{:?}", res.body);
         session_token(&res).expect("cookie de session")
+    }
+
+    pub async fn patch(&self, uri: &str, body: Value, session: Option<&str>) -> Response {
+        self.request(Method::PATCH, uri, Some(body), session).await
+    }
+
+    pub async fn delete(&self, uri: &str, session: Option<&str>) -> Response {
+        self.request(Method::DELETE, uri, None, session).await
+    }
+
+    /// Crée un compte avec l'abonnement organisateur.
+    pub async fn register_organizer(&self, email: &str, name: &str) -> String {
+        let token = self.register(email, name).await;
+        sqlx::query("UPDATE users SET plan = 'organizer' WHERE email = $1::citext")
+            .bind(email)
+            .execute(&self.db)
+            .await
+            .unwrap();
+        token
+    }
+
+    /// Crée un voyage et renvoie son identifiant.
+    pub async fn create_trip(&self, session: &str, name: &str) -> String {
+        let res = self
+            .post(
+                "/api/v1/trips",
+                json!({ "name": name, "start_date": "2026-12-01", "end_date": "2026-12-08" }),
+                Some(session),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::CREATED, "{:?}", res.body);
+        res.body["id"].as_str().unwrap().to_owned()
+    }
+
+    /// Crée une invitation et renvoie son jeton.
+    pub async fn invite(&self, session: &str, trip_id: &str, role: &str) -> String {
+        let res = self
+            .post(
+                &format!("/api/v1/trips/{trip_id}/invitations"),
+                json!({ "role": role }),
+                Some(session),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::CREATED, "{:?}", res.body);
+        res.body["url"]
+            .as_str()
+            .unwrap()
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .to_owned()
+    }
+
+    /// Fait rejoindre `session` au voyage via une nouvelle invitation.
+    pub async fn join(&self, organizer: &str, trip_id: &str, member: &str, role: &str) {
+        let token = self.invite(organizer, trip_id, role).await;
+        let res = self
+            .post(
+                &format!("/api/v1/invitations/{token}/accept"),
+                json!({}),
+                Some(member),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    }
+
+    pub async fn user_id(&self, session: &str) -> String {
+        self.get("/api/v1/me", Some(session)).await.body["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
     }
 
     /// Attend qu'un email soit envoyé (les envois se font en tâche de fond).

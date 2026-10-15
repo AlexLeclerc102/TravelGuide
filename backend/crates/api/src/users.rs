@@ -1,7 +1,7 @@
 //! Accès aux comptes utilisateurs.
 
 use serde::Serialize;
-use sqlx::{PgExecutor, PgPool};
+use sqlx::PgExecutor;
 use time::OffsetDateTime;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -64,14 +64,15 @@ pub async fn find_by_email(db: impl PgExecutor<'_>, email: &str) -> sqlx::Result
 
 /// Crée un compte. Renvoie `None` si l'email est déjà utilisé.
 pub async fn create(
-    db: &PgPool,
+    db: impl PgExecutor<'_>,
     email: &str,
     display_name: &str,
     password_hash: Option<&str>,
+    plan: &str,
 ) -> sqlx::Result<Option<UserRow>> {
     sqlx::query_as(&format!(
-        "INSERT INTO users (email, display_name, password_hash)
-         VALUES ($1::citext, $2, $3)
+        "INSERT INTO users (email, display_name, password_hash, plan)
+         VALUES ($1::citext, $2, $3, $4)
          ON CONFLICT (email) DO NOTHING
          RETURNING {}",
         UserRow::COLUMNS
@@ -79,6 +80,18 @@ pub async fn create(
     .bind(email)
     .bind(display_name)
     .bind(password_hash)
+    .bind(plan)
     .fetch_optional(db)
+    .await
+}
+
+pub async fn set_plan(db: impl PgExecutor<'_>, user_id: Uuid, plan: &str) -> sqlx::Result<UserRow> {
+    sqlx::query_as(&format!(
+        "UPDATE users SET plan = $2 WHERE id = $1 RETURNING {}",
+        UserRow::COLUMNS
+    ))
+    .bind(user_id)
+    .bind(plan)
+    .fetch_one(db)
     .await
 }

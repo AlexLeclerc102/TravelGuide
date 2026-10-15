@@ -41,3 +41,27 @@
   email + mot de passe s'il existe ; suppression en cascade).
 - **Écart connu** : l'inscription renvoie 409 si l'email existe déjà, ce qui révèle l'existence d'un
   compte (compromis d'ergonomie usuel, atténué par la limitation de débit).
+
+## Voyages, membres et invitations (incrément 2)
+
+- **Rôles** (`viewer` < `editor` < `organizer`) : un seul organisateur par voyage (index unique
+  partiel). Toutes les routes d'un voyage passent par `trips::require_role` : un non-membre reçoit
+  **404** (l'existence du voyage n'est pas révélée), un rôle insuffisant **403**.
+- **Droits** : lecture pour tous les membres ; paramètres, suppression, membres et invitations
+  réservés à l'organisateur ; un membre peut quitter le voyage ; l'organisateur peut transférer
+  l'organisation (il devient éditeur). Les emails des membres ne sont visibles que par l'organisateur.
+- **Abonnement simulé** : création de voyage réservée au plan `organizer` (`403 plan_required`),
+  accordé via `ORGANIZER_EMAILS` à l'inscription ou à la connexion. Les invités sont toujours `free`.
+- **Verrouillage optimiste** : `trips.version` ; une modification avec une version obsolète
+  renvoie **409** et le frontend recharge le voyage.
+- **Invitations** : jeton 256 bits (empreinte stockée), rôle éditeur ou lecteur, validité 1–30 jours,
+  nombre d'utilisations optionnel, révocables. Un membre existant qui réutilise un lien garde son
+  rôle s'il est supérieur et ne consomme pas d'utilisation.
+- **Invité sans friction** : prénom + email suffisent ; un compte sans mot de passe est créé et
+  connecté. Si l'email correspond déjà à un compte : **409 `account_exists`**, et l'interface propose
+  un lien magique qui ramène à l'invitation (`next`). Comme n'importe qui peut créer un compte invité
+  avec l'email d'autrui, la première connexion par lien magique (preuve de possession de l'email)
+  **ferme toutes les sessions existantes** de ce compte.
+- **Suppression de compte** : transfert de chaque voyage organisé à l'éditeur le plus ancien, sinon
+  suppression du voyage (les lecteurs ne reçoivent pas l'organisation).
+- **Reporté** : `trip_days` (modes et hébergement par jour) arrive avec l'incrément transports.

@@ -49,6 +49,19 @@ pub struct LoginRequest {
 #[derive(Deserialize, ToSchema)]
 pub struct MagicLinkRequest {
     pub email: String,
+    /// Page interne où revenir après connexion (ex. `/invite/<jeton>`).
+    pub next: Option<String>,
+}
+
+/// Chemin interne sûr pour une redirection (pas de domaine externe, caractères limités).
+fn safe_next(next: Option<&str>) -> Option<&str> {
+    next.filter(|n| {
+        n.len() <= 200
+            && n.starts_with('/')
+            && !n.starts_with("//")
+            && n.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_'))
+    })
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -103,7 +116,12 @@ async fn register(
     validate::password(&req.password)?;
 
     let hash = password::hash(req.password).await?;
-    let user = users::create(&state.db, &email, &display_name, Some(&hash))
+    let plan = if state.config.grants_organizer(&email) {
+        "organizer"
+    } else {
+        "free"
+    };
+    let user = users::create(&state.db, &email, &display_name, Some(&hash), plan)
         .await?
         .ok_or_else(|| AppError::Conflict("un compte existe déjà pour cette adresse".into()))?;
     tracing::info!(user_id = %user.id, "compte créé");
@@ -138,7 +156,10 @@ async fn login(
     if !password::verify(req.password, hash).await? {
         return Err(AppError::Unauthorized);
     }
-    let user = user.ok_or(AppError::Unauthorized)?;
+    let mut user = user.ok_or(AppError::Unauthorized)?;
+    if user.plan != "organizer" && state.config.grants_organizer(&user.email) {
+        user = users::set_plan(&state.db, user.id, "organizer").await?;
+    }
     start_session(&state, jar, &headers, user).await
 }
 
@@ -189,7 +210,11 @@ async fn request_magic_link(
         .execute(&state.db)
         .await?;
 
-        let link = format!("{}/auth/magic?token={token}", state.config.public_origin);
+        let mut link = format!("{}/auth/magic?token={token}", state.config.public_origin);
+        if let Some(next) = safe_next(req.next.as_deref()) {
+            link.push_str("&next=");
+            link.push_str(next);
+        }
         let email = Email {
             to: user.email,
             subject: "Votre lien de connexion TravelGuide".into(),
@@ -240,6 +265,19 @@ async fn verify_magic_link(
     .fetch_optional(&mut *tx)
     .await?;
     let user_id = user_id.ok_or_else(invalid)?;
+    // Première preuve de possession de l'email : on ferme les sessions ouvertes avant
+    // (un compte invité a pu être créé avec cet email par quelqu'un d'autre).
+    let was_verified: bool =
+        sqlx::query_scalar("SELECT email_verified_at IS NOT NULL FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if !was_verified {
+        sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+    }
     let user: UserRow = sqlx::query_as(&format!(
         "UPDATE users SET email_verified_at = coalesce(email_verified_at, now())
          WHERE id = $1 RETURNING {}",
@@ -250,4 +288,23 @@ async fn verify_magic_link(
     .await?;
     tx.commit().await?;
     start_session(&state, jar, &headers, user).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_next;
+
+    #[test]
+    fn next_must_be_internal_path() {
+        assert_eq!(safe_next(Some("/invite/abc-_1")), Some("/invite/abc-_1"));
+        for bad in [
+            "//evil.example",
+            "https://evil.example",
+            "/a?b=c",
+            "/a b",
+            "invite",
+        ] {
+            assert_eq!(safe_next(Some(bad)), None, "{bad}");
+        }
+    }
 }

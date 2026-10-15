@@ -26,7 +26,7 @@ export function LoginPage() {
     if (mode === 'password') {
       login.mutate({ email, password }, { onSuccess: () => navigate(next, { replace: true }) })
     } else {
-      magic.mutate(email)
+      magic.mutate({ email, next: next === '/' ? undefined : next })
     }
   }
 

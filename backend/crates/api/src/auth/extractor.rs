@@ -33,3 +33,19 @@ impl FromRequestParts<AppState> for CurrentUser {
         })
     }
 }
+
+/// `Option<CurrentUser>` : `None` si aucune session valide (routes publiques).
+impl axum::extract::OptionalFromRequestParts<AppState> for CurrentUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Option<Self>, AppError> {
+        match <Self as FromRequestParts<AppState>>::from_request_parts(parts, state).await {
+            Ok(user) => Ok(Some(user)),
+            Err(AppError::Unauthorized) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}

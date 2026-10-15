@@ -72,13 +72,14 @@ describe('authentification', () => {
     const api = mockApi({
       'GET /me': () => (loggedIn ? { status: 200, body: demoUser } : unauthenticated()),
       'GET /health': health,
+      'GET /trips': () => ({ status: 200, body: [] }),
       'POST /auth/magic-link/verify': () => {
         loggedIn = true
         return { status: 200, body: demoUser }
       },
     })
     renderApp('/auth/magic?token=abc123')
-    expect(await screen.findByText('carte')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Mes voyages' })).toBeInTheDocument()
     const verify = api.mock.calls.filter(([, init]) => init?.method === 'POST')
     expect(verify).toHaveLength(1)
     expect(JSON.parse(String(verify[0][1]?.body))).toEqual({ token: 'abc123' })

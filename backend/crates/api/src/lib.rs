@@ -10,6 +10,7 @@ pub mod mail;
 pub mod rate_limit;
 pub mod routes;
 pub mod state;
+pub mod trips;
 pub mod users;
 pub mod validate;
 

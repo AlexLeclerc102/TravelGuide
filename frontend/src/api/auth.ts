@@ -51,7 +51,10 @@ export const useVerifyMagicLink = () =>
   useSetsMe((token: string) => post<User>('/auth/magic-link/verify', { token }))
 
 export const useRequestMagicLink = () =>
-  useMutation({ mutationFn: (email: string) => post<{ message: string }>('/auth/magic-link', { email }) })
+  useMutation({
+    mutationFn: (v: { email: string; next?: string }) =>
+      post<{ message: string }>('/auth/magic-link', v),
+  })
 
 export const useUpdateMe = () =>
   useSetsMe((v: { display_name: string }) =>

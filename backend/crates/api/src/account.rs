@@ -14,6 +14,16 @@ pub struct AccountExport {
     pub exported_at: OffsetDateTime,
     pub user: User,
     pub sessions: Vec<SessionExport>,
+    pub trips: Vec<MembershipExport>,
+}
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct MembershipExport {
+    pub trip_id: Uuid,
+    pub trip_name: String,
+    pub role: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub joined_at: OffsetDateTime,
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -35,19 +45,69 @@ pub async fn export(db: &PgPool, user: User) -> sqlx::Result<AccountExport> {
     .bind(user.id)
     .fetch_all(db)
     .await?;
+    let trips = sqlx::query_as(
+        "SELECT t.id AS trip_id, t.name AS trip_name, m.role, m.joined_at
+         FROM trip_members m JOIN trips t ON t.id = m.trip_id
+         WHERE m.user_id = $1 ORDER BY m.joined_at",
+    )
+    .bind(user.id)
+    .fetch_all(db)
+    .await?;
     Ok(AccountExport {
         exported_at: OffsetDateTime::now_utc(),
         user,
         sessions,
+        trips,
     })
 }
 
 /// Supprime définitivement un compte et ses données personnelles.
 ///
-/// Les sessions et liens magiques sont supprimés en cascade. Les règles propres
-/// aux voyages (transfert à l'éditeur le plus ancien, etc.) s'ajoutent ici.
+/// Pour chaque voyage qu'il organise, l'organisation est transférée à l'éditeur
+/// le plus ancien ; sans éditeur, le voyage est supprimé. Sessions, liens magiques
+/// et adhésions sont supprimés en cascade.
 pub async fn delete(db: &PgPool, user_id: Uuid) -> sqlx::Result<()> {
     let mut tx = db.begin().await?;
+    let organized: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT trip_id FROM trip_members WHERE user_id = $1 AND role = 'organizer' FOR UPDATE",
+    )
+    .bind(user_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for trip_id in organized {
+        let successor: Option<Uuid> = sqlx::query_scalar(
+            "SELECT user_id FROM trip_members
+             WHERE trip_id = $1 AND role = 'editor'
+             ORDER BY joined_at, user_id LIMIT 1",
+        )
+        .bind(trip_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        match successor {
+            Some(successor) => {
+                sqlx::query("DELETE FROM trip_members WHERE trip_id = $1 AND user_id = $2")
+                    .bind(trip_id)
+                    .bind(user_id)
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query(
+                    "UPDATE trip_members SET role = 'organizer' WHERE trip_id = $1 AND user_id = $2",
+                )
+                .bind(trip_id)
+                .bind(successor)
+                .execute(&mut *tx)
+                .await?;
+                tracing::info!(%trip_id, %successor, "organisation transférée (suppression de compte)");
+            }
+            None => {
+                sqlx::query("DELETE FROM trips WHERE id = $1")
+                    .bind(trip_id)
+                    .execute(&mut *tx)
+                    .await?;
+                tracing::info!(%trip_id, "voyage supprimé avec le compte de son organisateur");
+            }
+        }
+    }
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(user_id)
         .execute(&mut *tx)

@@ -17,6 +17,8 @@ pub struct Config {
     /// URL SMTP (`smtp://host:port` ou `smtps://user:pass@host`). Absente : emails journalisés.
     pub smtp_url: Option<String>,
     pub mail_from: String,
+    /// Abonnement simulé : emails recevant le plan `organizer` (`*` = tout le monde).
+    pub organizer_emails: Vec<String>,
 }
 
 impl Config {
@@ -38,6 +40,11 @@ impl Config {
                 .context("COOKIE_SECURE doit valoir true ou false")?,
             smtp_url: std::env::var("SMTP_URL").ok().filter(|s| !s.is_empty()),
             mail_from: optional("MAIL_FROM", "TravelGuide <no-reply@travelguide.local>"),
+            organizer_emails: optional("ORGANIZER_EMAILS", "")
+                .split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect(),
         })
     }
 
@@ -51,7 +58,15 @@ impl Config {
             cookie_secure: false,
             smtp_url: None,
             mail_from: "TravelGuide <no-reply@travelguide.local>".into(),
+            organizer_emails: vec![],
         }
+    }
+
+    /// L'abonnement (simulé) organisateur est-il accordé à cet email ?
+    pub fn grants_organizer(&self, email: &str) -> bool {
+        self.organizer_emails
+            .iter()
+            .any(|e| e == "*" || e.eq_ignore_ascii_case(email))
     }
 
     pub fn is_allowed_origin(&self, origin: &str) -> bool {

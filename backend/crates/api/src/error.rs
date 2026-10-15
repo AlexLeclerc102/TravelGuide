@@ -23,10 +23,14 @@ pub enum AppError {
     Unauthorized,
     #[error("accès refusé")]
     Forbidden,
+    #[error("un abonnement organisateur est nécessaire pour créer un voyage")]
+    PlanRequired,
     #[error("ressource introuvable")]
     NotFound,
     #[error("{0}")]
     Conflict(String),
+    #[error("un compte existe déjà pour cet email : connectez-vous pour accepter l'invitation")]
+    AccountExists,
     #[error("trop de tentatives, réessayez plus tard")]
     TooManyRequests,
     #[error(transparent)]
@@ -43,8 +47,10 @@ impl IntoResponse for AppError {
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             AppError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+            AppError::PlanRequired => (StatusCode::FORBIDDEN, "plan_required"),
             AppError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             AppError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
+            AppError::AccountExists => (StatusCode::CONFLICT, "account_exists"),
             AppError::TooManyRequests => (StatusCode::TOO_MANY_REQUESTS, "too_many_requests"),
             AppError::Database(sqlx::Error::RowNotFound) => (StatusCode::NOT_FOUND, "not_found"),
             AppError::Database(_) | AppError::Internal(_) => {

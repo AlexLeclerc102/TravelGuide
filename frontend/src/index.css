@@ -79,3 +79,50 @@ button.danger { background: var(--error); border-color: var(--error); color: #ff
   .hide-mobile { display: none; }
   .auth-card { margin: 1rem; }
 }
+
+textarea, select {
+  font: inherit; padding: 0.55rem 0.7rem; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg); color: var(--fg);
+}
+.row { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: end; }
+.row > label { flex: 1 1 140px; }
+.row > input { flex: 1 1 auto; min-width: 0; }
+.chips { border: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.chips legend { font-size: 0.9rem; margin-bottom: 0.4rem; }
+.chip {
+  display: inline-flex !important; grid-auto-flow: column; align-items: center; gap: 0.35rem;
+  border: 1px solid var(--border); border-radius: 999px; padding: 0.3rem 0.7rem; cursor: pointer;
+}
+.hint, .notice {
+  font-size: 0.88rem; margin: 0; padding: 0.6rem 0.8rem; border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.small { font-size: 0.85rem; }
+.page-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.page-header h1 { margin: 0; }
+.trip-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.6rem; }
+.trip-card { display: grid; gap: 0.2rem; color: inherit; text-decoration: none; }
+.trip-card:hover { border-color: var(--accent); }
+.trip-layout { display: grid; grid-template-columns: minmax(320px, 420px) 1fr; height: 100%; }
+.trip-sidebar {
+  overflow: auto; padding: 1rem; display: grid; gap: 1rem; align-content: start;
+  border-right: 1px solid var(--border);
+}
+.trip-sidebar h1 { margin: 0.4rem 0; }
+.trip-sidebar header p { margin: 0.2rem 0; }
+.trip-map { min-height: 0; }
+.member-list { list-style: none; padding: 0; margin: 0.6rem 0 0; display: grid; gap: 0.6rem; }
+.member-list li { display: flex; justify-content: space-between; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+.actions button, .member-list button { padding: 0.3rem 0.6rem; font-size: 0.85rem; }
+button.danger-outline { color: var(--error); border-color: var(--error); }
+.invite-link { margin-top: 0.8rem; }
+.invite-link p { margin: 0 0 0.3rem; font-size: 0.9rem; }
+.tag { font-size: 0.75rem; padding: 0.05rem 0.45rem; border-radius: 999px; border: 1px solid currentColor; }
+.tag-active { color: var(--ok); }
+.tag-revoked, .tag-expired, .tag-exhausted { color: var(--muted); }
+
+@media (max-width: 800px) {
+  .trip-layout { grid-template-columns: 1fr; grid-template-rows: auto 50vh; height: auto; }
+  .trip-sidebar { border-right: none; }
+}
