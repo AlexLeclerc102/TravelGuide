@@ -9,6 +9,7 @@
 | Recherche de lieux | Nominatim public via le backend (cache, 1 req/s, User-Agent identifié, pas d'autocomplétion). Auto-hébergement prévu avant production. |
 | Détails POI | Tags OSM fournis par Nominatim (`extratags` : `opening_hours`, `website`, `phone`, `email`, `wikidata`, `wikipedia`), horaires interprétés avec la crate `opening-hours`. Overpass n'apporte rien de plus pour le MVP (révisé à l'incrément 3). |
 | Présentation des lieux | Wikipédia (résumé), Wikidata (articles par langue, photo P18) et Wikimedia Commons (miniature, auteur, licence), via le backend avec cache 7 jours. Langues : fr, puis en, puis es. |
+| Suggestions | Lieux importés de l'extrait OSM de Valhalla dans PostGIS (`osm_places`, au démarrage si le fichier a changé) : Overpass public mesuré à 25–40 s ou en erreur 502, inutilisable en interactif. Score déterministe et explicable (`planner::recommend`), sans apprentissage ni classement sponsorisé. |
 | Fond de carte | OpenFreeMap (tuiles vectorielles, sans clé). |
 | Authentification | Mot de passe (Argon2id) + lien magique (SMTP, Mailpit en dev). Sessions en base, cookie HttpOnly. |
 | Invités | Le lien d'invitation demande prénom + email : compte sans mot de passe créé et connecté immédiatement. |
@@ -180,6 +181,32 @@
 - **Interface** (onglet Transports, section « Séjours ») : liste des séjours (zones en pointillés),
   liens de recherche Booking.com et Airbnb avec les dates d'arrivée et de départ et le nombre de
   membres, sans affiliation ni suivi ; « Remplacer par… » parmi les hébergements du voyage.
+
+## Suggestions
+
+- **Import** (`osm_import`, migration 0011) : `OSM_EXTRACT` (l'extrait de Valhalla, monté en lecture
+  seule) est lu au démarrage en tâche de fond (crate `osmpbf`, trois passes : relations, chemins,
+  nœuds ; ~11 000 lieux en 1,5 s pour le Costa Rica) si sa taille ou sa date a changé. Lieux nommés
+  à visiter (`tourism=attraction|viewpoint|museum…`, `waterway=waterfall`, `natural=beach|volcano…`,
+  parcs nationaux, sites historiques), restaurants et cafés, hébergements. Position : nœud, moyenne
+  des nœuds d'un chemin, centre de l'emprise d'une relation.
+- **Candidats** (`suggest`) : autour des points de départ de chaque jour (hébergement de la veille et
+  du jour, zones comprises ; à défaut les lieux du voyage), rayon selon le mode le plus rapide
+  (3 km à pied, 10 km à vélo, 40 km en voiture), hors lieux déjà ajoutés et suggestions écartées.
+  Sans filtre, ni restaurants (proches de tout, ils évinceraient les sites : filtre « Où manger »)
+  ni hébergements (proposés autour d'une zone, `?lodging_near=`).
+- **Score** (`planner::recommend`, pur et testé) : proximité (trajet estimé à vol d'oiseau majoré,
+  écarté au-delà de 2 h 30), notoriété (langues Wikipédia de l'élément Wikidata, en cache 7 jours,
+  0 si Wikidata ne répond pas), goûts du groupe (moyenne par catégorie, au moins 2 avis), données
+  connues (horaires, contact, Wikipédia), temps libre du jour d'après l'itinéraire, pénalités de
+  saturation (catégorie déjà très présente, refus du groupe). Fermé à chaque date : écarté. Puis
+  diversification (même catégorie à moins de 5 km pénalisée) et doublons homonymes supprimés.
+  Chaque critère qui compte donne une raison affichée (« ≈ 15 min de La Fortuna (mer. 2 déc.) »).
+- **Refus** : `trip_dismissed_suggestions`, partagé par le groupe (éditeurs), réinitialisable ;
+  sujet temps réel `suggestions`. Les suggestions sont rechargées à tout changement du voyage.
+- **Interface** : onglet « Suggestions » (filtres, raisons, liens, Ajouter / Pas intéressé),
+  marqueurs en pointillés sur la carte ; « Hébergements dans la zone » sous une zone d'hébergement,
+  « Choisir » ajoute l'hôtel et remplace la zone en une fois.
 
 ## Itinéraire (incrément 6)
 

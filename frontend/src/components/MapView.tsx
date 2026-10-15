@@ -20,6 +20,8 @@ export interface MapMarker {
   category: Category
   lat: number
   lon: number
+  /** Suggestion (pas encore dans le voyage) : marqueur distinct. */
+  suggestion?: boolean
 }
 
 interface Props {
@@ -39,7 +41,7 @@ interface Props {
 function markerElement(m: MapMarker, onClick: () => void) {
   const el = document.createElement('button')
   el.type = 'button'
-  el.className = `poi-marker cat-${m.category}`
+  el.className = `poi-marker cat-${m.category}${m.suggestion ? ' suggestion' : ''}`
   el.title = m.name
   el.setAttribute('aria-label', m.name)
   el.textContent = t.categoryIcons[m.category]
@@ -110,7 +112,7 @@ export function MapView({ markers = [], selectedId, draft, addMode, route, onSel
       }
     }
     for (const m of markers) {
-      const key = `${m.lat},${m.lon},${m.category},${m.name}`
+      const key = `${m.lat},${m.lon},${m.category},${m.name},${m.suggestion ?? false}`
       const existing = refs.get(m.id)
       if (existing?.key === key) continue
       existing?.marker.remove()
@@ -119,8 +121,8 @@ export function MapView({ markers = [], selectedId, draft, addMode, route, onSel
         .addTo(map)
       refs.set(m.id, { marker, key })
     }
-    // Premier affichage : cadrer sur les lieux du voyage.
-    if (!fitted.current && markers.length > 0) {
+    // Premier affichage : cadrer sur les lieux du voyage (pas sur des suggestions).
+    if (!fitted.current && markers.some((m) => !m.suggestion)) {
       fitted.current = true
       if (markers.length === 1) {
         map.jumpTo({ center: [markers[0].lon, markers[0].lat], zoom: 13 })

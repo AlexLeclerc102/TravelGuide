@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { errorMessage } from '../../api/errors'
-import { useCreatePoi, usePlaceSearch, type Place, type Poi } from '../../api/pois'
+import { placeToInput, useCreatePoi, usePlaceSearch, type Place, type Poi } from '../../api/pois'
+import { useSuggestions } from '../../api/suggestions'
 import { useReplaceStay, useSetStay, type TripDay } from '../../api/transport'
 import type { Trip } from '../../api/trips'
 import { t } from '../../i18n/fr'
@@ -94,7 +95,71 @@ function StayRow({ trip, stay, poi, pois, canEdit }: { trip: Trip; stay: Stay; p
           {errorMessage(replace.error)}
         </p>
       )}
+      {poi?.placeholder && <AreaHotels trip={trip} area={poi} canEdit={canEdit} />}
     </li>
+  )
+}
+
+/** Hébergements OSM autour d'une zone ; « Choisir » l'ajoute et remplace la zone. */
+function AreaHotels({ trip, area, canEdit }: { trip: Trip; area: Poi; canEdit: boolean }) {
+  const [open, setOpen] = useState(false)
+  const { data, error, isPending } = useSuggestions(trip.id, { lodgingNear: area.id }, open)
+  const create = useCreatePoi(trip.id)
+  const replace = useReplaceStay(trip.id)
+  const busy = create.isPending || replace.isPending
+  const hotels = (data?.suggestions ?? []).slice(0, 6)
+  const failure = error ?? create.error ?? replace.error
+
+  function choose(place: Place) {
+    create.mutate(placeToInput(place), {
+      onSuccess: (hotel) => replace.mutate({ from_poi_id: area.id, to_poi_id: hotel.id, remove_from: true }),
+    })
+  }
+
+  return (
+    <details className="area-hotels" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary className="small">{t.suggestions.hotelsInArea}</summary>
+      {open && isPending && <p className="muted small">{t.suggestions.loading}</p>}
+      {data && hotels.length === 0 && <p className="muted small">{t.suggestions.noHotels}</p>}
+      {hotels.length > 0 && (
+        <ul className="result-list">
+          {hotels.map(({ place, travel_min }) => (
+            <li key={`${place.osm?.type}${place.osm?.id}`}>
+              <span className="poi-text">
+                <strong>{place.name}</strong>
+                <span className="muted small">
+                  ≈ {travel_min} min
+                  {place.website && (
+                    <>
+                      {' · '}
+                      <a href={place.website} {...external}>
+                        {t.links.labels.website}
+                      </a>
+                    </>
+                  )}
+                </span>
+              </span>
+              {canEdit && (
+                <button
+                  type="button"
+                  className="small-button primary"
+                  disabled={busy}
+                  aria-label={t.suggestions.chooseNamed(place.name)}
+                  onClick={() => choose(place)}
+                >
+                  {t.suggestions.choose}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {!!failure && (
+        <p className="error small" role="alert">
+          {errorMessage(failure)}
+        </p>
+      )}
+    </details>
   )
 }
 

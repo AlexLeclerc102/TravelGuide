@@ -57,6 +57,19 @@ async fn main() -> anyhow::Result<()> {
 
     let wiki = Arc::new(WikiService::new(Wikimedia::new(&config.user_agent())?));
 
+    // Lieux des suggestions : import en tâche de fond, l'API répond pendant ce temps.
+    match config.osm_extract.clone() {
+        Some(path) => {
+            let db = db.clone();
+            tokio::spawn(async move {
+                if let Err(e) = api::osm_import::import_if_changed(&db, &path).await {
+                    tracing::warn!(error = ?e, "import des lieux OSM en échec");
+                }
+            });
+        }
+        None => tracing::warn!("OSM_EXTRACT absent : pas de suggestions de lieux"),
+    }
+
     let addr = config.bind_addr;
     let app = api::build_app(db, config, mailer, places, routing, wiki);
     let listener = tokio::net::TcpListener::bind(addr).await?;

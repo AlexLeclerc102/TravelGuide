@@ -13,8 +13,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::time::Instant;
 
-use super::{Category, OsmRef, OsmType, Place, PlaceError, PlaceProvider, Viewbox};
-use crate::validate;
+use super::{Category, OsmDetails, OsmRef, OsmType, Place, PlaceError, PlaceProvider, Viewbox};
 
 /// Intervalle minimal entre deux requêtes (toutes requêtes confondues).
 const MIN_INTERVAL: Duration = Duration::from_secs(1);
@@ -144,21 +143,7 @@ impl Item {
             (Some(osm_type), Some(id)) if id > 0 => Some(OsmRef { osm_type, id }),
             _ => None,
         };
-        // Premier tag présent parmi `keys` ; une valeur invalide est ignorée.
-        let tag = |keys: &[&str], check: fn(Option<&str>) -> Result<Option<String>, _>| {
-            let value = keys.iter().find_map(|k| extratags.get(*k))?;
-            // OSM sépare plusieurs valeurs par `;` : on garde la première.
-            let first = value.split(';').next().unwrap_or_default();
-            check(Some(first)).ok().flatten()
-        };
-        let website = tag(&["website", "contact:website"], validate::website);
-        let phone = tag(
-            &["phone", "contact:phone", "contact:mobile"],
-            validate::phone,
-        );
-        let email = tag(&["email", "contact:email"], validate::contact_email);
-        let wikidata = tag(&["wikidata"], validate::wikidata);
-        let wikipedia = tag(&["wikipedia"], validate::wikipedia);
+        let details = OsmDetails::from_tags(|k| extratags.get(k).map(String::as_str));
         Ok(Place {
             name: self.name,
             display_name: self.display_name,
@@ -167,12 +152,12 @@ impl Item {
             category: Category::from_osm(&self.category, &self.kind),
             osm_tag: format!("{}={}", self.category, self.kind),
             osm,
-            opening_hours: extratags.get("opening_hours").cloned(),
-            website,
-            phone,
-            email,
-            wikidata,
-            wikipedia,
+            opening_hours: details.opening_hours,
+            website: details.website,
+            phone: details.phone,
+            email: details.email,
+            wikidata: details.wikidata,
+            wikipedia: details.wikipedia,
             country_code: self
                 .address
                 .get("country_code")

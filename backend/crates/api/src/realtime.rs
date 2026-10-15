@@ -37,6 +37,8 @@ pub enum Topic {
     Reviews,
     Days,
     Itinerary,
+    /// Suggestions écartées (les suggestions dépendent aussi des lieux, jours et avis).
+    Suggestions,
 }
 
 /// Auteur d'une modification.

@@ -6,19 +6,20 @@ import { ApiError } from '../api/client'
 import { errorMessage } from '../api/errors'
 import { DEFAULT_DURATION, placeToInput, reverseGeocode, usePois, type Bounds, type PoiInput } from '../api/pois'
 import { tripKeys, useDeleteTrip, useRemoveMember, useTrip, useUpdateTrip, type Trip } from '../api/trips'
-import { MapView } from '../components/MapView'
+import { MapView, type MapMarker } from '../components/MapView'
 import { CollabBar } from '../components/trip/CollabBar'
 import { InvitationsPanel } from '../components/trip/InvitationsPanel'
 import { ItineraryPanel } from '../components/trip/ItineraryPanel'
 import { MembersPanel } from '../components/trip/MembersPanel'
 import { PoiPanel, type Selection } from '../components/trip/PoiPanel'
+import { SuggestionsPanel } from '../components/trip/SuggestionsPanel'
 import { TransportPanel } from '../components/trip/TransportPanel'
 import { TripForm } from '../components/trip/TripForm'
 import { t } from '../i18n/fr'
 import { dayCount, formatDateRange } from '../lib/format'
 import { useTripRealtime } from '../realtime/useTripRealtime'
 
-type Tab = 'places' | 'itinerary' | 'transport' | 'members' | 'settings'
+type Tab = 'places' | 'suggestions' | 'itinerary' | 'transport' | 'members' | 'settings'
 
 export function TripPage() {
   const { tripId = '' } = useParams()
@@ -69,6 +70,8 @@ function TripView({ trip, onRemoved }: { trip: Trip; onRemoved: () => void }) {
   const [locateError, setLocateError] = useState<unknown>(null)
   const [bounds, setBounds] = useState<Bounds | null>(null)
   const [route, setRoute] = useState<[number, number][] | null>(null)
+  const [suggestionMarkers, setSuggestionMarkers] = useState<MapMarker[]>([])
+  const [focusedSuggestion, setFocusedSuggestion] = useState<string | null>(null)
 
   // Échap annule le mode « ajout par clic ».
   useEffect(() => {
@@ -102,8 +105,11 @@ function TripView({ trip, onRemoved }: { trip: Trip; onRemoved: () => void }) {
   }, [])
 
   const markers = useMemo(
-    () => pois.map((p) => ({ id: p.id, name: p.name, category: p.category, lat: p.lat, lon: p.lon })),
-    [pois],
+    () => [
+      ...pois.map((p) => ({ id: p.id, name: p.name, category: p.category, lat: p.lat, lon: p.lon })),
+      ...(tab === 'suggestions' ? suggestionMarkers : []),
+    ],
+    [pois, tab, suggestionMarkers],
   )
   const draft = selection?.kind === 'draft' ? selection.draft : null
 
@@ -124,7 +130,7 @@ function TripView({ trip, onRemoved }: { trip: Trip; onRemoved: () => void }) {
           <CollabBar {...realtime} />
         </header>
         <div className="tabs" role="tablist">
-          {(['places', 'itinerary', 'transport', 'members', 'settings'] as Tab[]).map((k) => (
+          {(['places', 'suggestions', 'itinerary', 'transport', 'members', 'settings'] as Tab[]).map((k) => (
             <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>
               {t.tabs[k]}
             </button>
@@ -157,6 +163,15 @@ function TripView({ trip, onRemoved }: { trip: Trip; onRemoved: () => void }) {
             }}
           />
         )}
+        {tab === 'suggestions' && (
+          <SuggestionsPanel
+            trip={trip}
+            pois={pois}
+            focusedId={focusedSuggestion}
+            onFocus={setFocusedSuggestion}
+            onMarkersChange={setSuggestionMarkers}
+          />
+        )}
         {tab === 'transport' && <TransportPanel trip={trip} pois={pois} onRouteChange={setRoute} />}
         {tab === 'members' && (
           <>
@@ -174,11 +189,15 @@ function TripView({ trip, onRemoved }: { trip: Trip; onRemoved: () => void }) {
       <div className="trip-map">
         <MapView
           markers={markers}
-          selectedId={selection?.kind === 'poi' ? selection.id : null}
+          selectedId={tab === 'suggestions' ? focusedSuggestion : selection?.kind === 'poi' ? selection.id : null}
           draft={draft && { lat: draft.lat, lon: draft.lon }}
           addMode={addMode}
           route={route}
           onSelect={(id) => {
+            if (id.startsWith('s:')) {
+              setFocusedSuggestion(id)
+              return
+            }
             setTab('places')
             setSelection({ kind: 'poi', id })
           }}

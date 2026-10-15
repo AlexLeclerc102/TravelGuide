@@ -18,6 +18,7 @@ use utoipa::ToSchema;
 pub use category::Category;
 
 use crate::error::AppError;
+use crate::validate;
 
 /// Type d'objet OpenStreetMap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
@@ -78,6 +79,44 @@ pub struct Place {
     pub wikipedia: Option<String>,
     /// Code pays ISO en majuscules (ex. `CR`).
     pub country_code: Option<String>,
+}
+
+/// Informations d'un objet OSM reprises sur un lieu : la première valeur de chaque tag
+/// (OSM sépare les valeurs multiples par `;`), les valeurs invalides étant ignorées.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OsmDetails {
+    pub opening_hours: Option<String>,
+    pub website: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub wikidata: Option<String>,
+    pub wikipedia: Option<String>,
+}
+
+impl OsmDetails {
+    pub fn from_tags<'a>(get: impl Fn(&str) -> Option<&'a str>) -> Self {
+        type Check = fn(Option<&str>) -> Result<Option<String>, AppError>;
+        let tag = |keys: &[&str], check: Check| {
+            let value = keys.iter().find_map(|k| get(k))?;
+            check(Some(value.split(';').next().unwrap_or_default()))
+                .ok()
+                .flatten()
+        };
+        Self {
+            opening_hours: get("opening_hours")
+                .map(str::trim)
+                .filter(|h| !h.is_empty() && h.len() <= 500)
+                .map(str::to_owned),
+            website: tag(&["website", "contact:website"], validate::website),
+            phone: tag(
+                &["phone", "contact:phone", "contact:mobile"],
+                validate::phone,
+            ),
+            email: tag(&["email", "contact:email"], validate::contact_email),
+            wikidata: tag(&["wikidata"], validate::wikidata),
+            wikipedia: tag(&["wikipedia"], validate::wikipedia),
+        }
+    }
 }
 
 /// Zone de la carte affichée : les résultats proches sont privilégiés, sans exclure les autres.

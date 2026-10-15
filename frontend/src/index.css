@@ -172,8 +172,16 @@ button.danger-outline { color: var(--error); border-color: var(--error); }
 .stay-row p, .stay-row label { margin: 0; }
 .tag-area { font-weight: normal; color: var(--accent); margin-left: 0.3rem; }
 .form label.checkbox { display: flex; flex-direction: row; align-items: center; gap: 0.4rem; }
+.area-hotels summary { cursor: pointer; }
+.area-hotels .result-list { margin-top: 0.4rem; }
 .add-stay summary { cursor: pointer; font-weight: 600; }
 .add-stay .form { margin-top: 0.5rem; }
+.suggestion-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.5rem; }
+.suggestion-card { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.7rem; display: grid; gap: 0.3rem; }
+.suggestion-card.focused { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.suggestion-head { display: flex; gap: 0.5rem; align-items: center; background: none; border: 0; padding: 0; text-align: left; color: inherit; cursor: pointer; }
+.suggestion-card .reasons { margin: 0; padding-left: 1.1rem; }
+.suggestion-card p, .suggestion-card .actions { margin: 0; }
 .wiki-card { margin-top: 0.6rem; }
 .wiki-card figure { margin: 0 0 0.4rem; }
 .wiki-card img { display: block; width: 100%; height: auto; max-height: 220px; object-fit: cover; border-radius: 6px; }
@@ -204,6 +212,7 @@ button.danger-outline { color: var(--error); border-color: var(--error); }
   font-size: 1rem; line-height: 1; background: #fff; border: 2px solid #0f766e;
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.35); cursor: pointer;
 }
+.poi-marker.suggestion { border-style: dashed; border-color: #6b7280; opacity: 0.85; width: 1.7rem; height: 1.7rem; font-size: 0.85rem; }
 .poi-marker.selected { border-color: #b45309; box-shadow: 0 0 0 5px rgb(180 83 9 / 0.4); z-index: 2; }
 
 /* Avis (incrément 4) */

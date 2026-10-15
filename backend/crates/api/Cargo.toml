@@ -17,6 +17,7 @@ rand = { workspace = true }
 sha2 = { workspace = true }
 chrono = { workspace = true }
 opening-hours = { workspace = true }
+osmpbf = { workspace = true }
 reqwest = { workspace = true }
 axum = { workspace = true }
 dotenvy = { workspace = true }

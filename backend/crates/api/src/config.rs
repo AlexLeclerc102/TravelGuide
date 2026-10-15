@@ -1,6 +1,7 @@
 //! Configuration lue depuis les variables d'environnement (aucun secret dans le code).
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use anyhow::Context;
 
@@ -25,6 +26,8 @@ pub struct Config {
     pub nominatim_contact: Option<String>,
     /// Moteur de routage Valhalla. Absent : trajets estimés à vol d'oiseau.
     pub valhalla_url: Option<String>,
+    /// Extrait OpenStreetMap (`.osm.pbf`) dont les lieux nourrissent les suggestions.
+    pub osm_extract: Option<PathBuf>,
 }
 
 impl Config {
@@ -58,6 +61,10 @@ impl Config {
             valhalla_url: std::env::var("VALHALLA_URL")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
+            osm_extract: std::env::var("OSM_EXTRACT")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .map(PathBuf::from),
         })
     }
 
@@ -75,6 +82,7 @@ impl Config {
             nominatim_url: String::new(),
             nominatim_contact: None,
             valhalla_url: None,
+            osm_extract: None,
         }
     }
 

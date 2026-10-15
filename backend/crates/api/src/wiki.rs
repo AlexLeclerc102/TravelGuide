@@ -93,6 +93,28 @@ pub trait WikiProvider: Send + Sync {
     async fn article(&self, lang: &str, title: &str) -> Result<Option<Article>, WikiError>;
     /// Miniature et crédits d'une photo Commons.
     async fn image(&self, file: &str) -> Result<Option<WikiImage>, WikiError>;
+    /// Nombre de langues de l'article Wikipédia de chaque élément (au plus 50 à la fois ;
+    /// un élément absent de la réponse n'existe pas).
+    async fn languages(&self, qids: &[String]) -> Result<HashMap<String, u32>, WikiError>;
+}
+
+/// Projets Wikimedia dont le code de site finit par `wiki` sans être une Wikipédia.
+const NOT_WIKIPEDIA: [&str; 8] = [
+    "commonswiki",
+    "specieswiki",
+    "metawiki",
+    "mediawikiwiki",
+    "wikidatawiki",
+    "sourceswiki",
+    "incubatorwiki",
+    "wikimaniawiki",
+];
+
+/// Langues de Wikipédia parmi les codes de site d'un élément (`frwiki`, `enwiki`…).
+fn count_wikipedias<'a>(sites: impl Iterator<Item = &'a str>) -> u32 {
+    sites
+        .filter(|s| s.ends_with("wiki") && !NOT_WIKIPEDIA.contains(s))
+        .count() as u32
 }
 
 const CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
@@ -102,6 +124,7 @@ const CACHE_MAX: usize = 2_000;
 pub struct WikiService {
     provider: Box<dyn WikiProvider>,
     cache: Mutex<HashMap<String, (Instant, Option<WikiSummary>)>>,
+    languages: Mutex<HashMap<String, (Instant, u32)>>,
 }
 
 impl WikiService {
@@ -109,7 +132,48 @@ impl WikiService {
         Self {
             provider: Box::new(provider),
             cache: Mutex::new(HashMap::new()),
+            languages: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Nombre de langues Wikipédia de chaque élément (0 s'il n'existe pas). En cache 7 jours ;
+    /// Wikidata ne répondant pas, les éléments non connus comptent pour 0 (rien n'échoue).
+    pub async fn languages(&self, qids: &[String]) -> HashMap<String, u32> {
+        let mut result = HashMap::with_capacity(qids.len());
+        let mut missing = vec![];
+        {
+            let cache = self.languages.lock().expect("mutex empoisonné");
+            for q in qids {
+                match cache.get(q).filter(|(at, _)| at.elapsed() < CACHE_TTL) {
+                    Some(&(_, n)) => {
+                        result.insert(q.clone(), n);
+                    }
+                    None => missing.push(q.clone()),
+                }
+            }
+        }
+        missing.sort();
+        missing.dedup();
+        for chunk in missing.chunks(50) {
+            match self.provider.languages(chunk).await {
+                Ok(found) => {
+                    let mut cache = self.languages.lock().expect("mutex empoisonné");
+                    if cache.len() >= CACHE_MAX * 10 {
+                        cache.clear();
+                    }
+                    for q in chunk {
+                        let n = found.get(q).copied().unwrap_or(0);
+                        cache.insert(q.clone(), (Instant::now(), n));
+                        result.insert(q.clone(), n);
+                    }
+                }
+                Err(WikiError::Unavailable(e)) => {
+                    tracing::warn!(error = ?e, "notoriété Wikidata indisponible");
+                    break;
+                }
+            }
+        }
+        result
     }
 
     /// Présentation d'un lieu d'après ses tags (`wikipedia` au format OSM `langue:Titre`).
@@ -359,6 +423,43 @@ impl WikiProvider for Wikimedia {
             None => Ok(None),
         }
     }
+
+    async fn languages(&self, qids: &[String]) -> Result<HashMap<String, u32>, WikiError> {
+        if qids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut url = reqwest::Url::parse("https://www.wikidata.org/w/api.php").expect("URL");
+        url.query_pairs_mut()
+            .append_pair("action", "wbgetentities")
+            .append_pair("format", "json")
+            .append_pair("ids", &qids.join("|"))
+            .append_pair("props", "sitelinks");
+        match self.get(url).await? {
+            Some(body) => parse_languages(&body).map_err(unreadable),
+            None => Ok(HashMap::new()),
+        }
+    }
+}
+
+fn parse_languages(body: &str) -> anyhow::Result<HashMap<String, u32>> {
+    #[derive(Deserialize)]
+    struct Response {
+        #[serde(default)]
+        entities: HashMap<String, serde_json::Value>,
+    }
+    let res: Response = serde_json::from_str(body)?;
+    Ok(res
+        .entities
+        .into_iter()
+        .filter(|(_, e)| e.get("missing").is_none())
+        .map(|(q, e)| {
+            let n = e["sitelinks"]
+                .as_object()
+                .map(|links| count_wikipedias(links.keys().map(String::as_str)))
+                .unwrap_or(0);
+            (q, n)
+        })
+        .collect())
 }
 
 fn parse_entity(body: &str, qid: &str) -> anyhow::Result<Option<Entity>> {
@@ -478,6 +579,8 @@ pub struct StaticWiki {
     /// Clé `langue:Titre`.
     pub articles: HashMap<String, Article>,
     pub images: HashMap<String, WikiImage>,
+    /// Langues Wikipédia par élément.
+    pub language_counts: HashMap<String, u32>,
     pub calls: AtomicUsize,
     pub down: std::sync::atomic::AtomicBool,
 }
@@ -508,6 +611,14 @@ impl WikiProvider for std::sync::Arc<StaticWiki> {
     async fn image(&self, file: &str) -> Result<Option<WikiImage>, WikiError> {
         self.enter()?;
         Ok(self.images.get(file).cloned())
+    }
+
+    async fn languages(&self, qids: &[String]) -> Result<HashMap<String, u32>, WikiError> {
+        self.enter()?;
+        Ok(qids
+            .iter()
+            .filter_map(|q| Some((q.clone(), *self.language_counts.get(q)?)))
+            .collect())
     }
 }
 
@@ -665,6 +776,34 @@ mod tests {
         assert!(i
             .page_url
             .starts_with("https://commons.wikimedia.org/wiki/File:"));
+    }
+
+    #[test]
+    fn counts_wikipedia_languages() {
+        let body = r#"{"entities":{
+            "Q641588":{"id":"Q641588","sitelinks":{"enwiki":{},"eswiki":{},"frwiki":{},
+                "commonswiki":{},"enwikivoyage":{},"zh_min_nanwiki":{}}},
+            "Q1":{"id":"Q1","missing":""}}}"#;
+        let counts = parse_languages(body).unwrap();
+        assert_eq!(counts.get("Q641588"), Some(&4));
+        assert_eq!(counts.get("Q1"), None);
+    }
+
+    #[tokio::test]
+    async fn language_counts_are_cached_and_never_fail() {
+        let mut wiki = StaticWiki::default();
+        wiki.language_counts.insert("Q641588".into(), 40);
+        let wiki = Arc::new(wiki);
+        let svc = WikiService::new(wiki.clone());
+        let qids = vec!["Q641588".to_owned(), "Q1".to_owned()];
+        let counts = svc.languages(&qids).await;
+        assert_eq!(counts["Q641588"], 40);
+        assert_eq!(counts["Q1"], 0);
+        wiki.down.store(true, Ordering::SeqCst);
+        // Depuis le cache ; un élément inconnu sans réponse : absent (compté 0 par l'appelant).
+        let again = svc.languages(&[qids[0].clone(), "Q2".to_owned()]).await;
+        assert_eq!(again.get("Q641588"), Some(&40));
+        assert_eq!(again.get("Q2"), None);
     }
 
     #[test]

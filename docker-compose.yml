@@ -39,6 +39,8 @@ services:
     build: ./backend
     env_file: .env
     ports: ["8080:8080"]
+    # Extrait OSM téléchargé par Valhalla : lieux des suggestions (importés au démarrage).
+    volumes: [valhalla-data:/osm:ro]
     depends_on:
       db: { condition: service_healthy }
 
