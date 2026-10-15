@@ -170,16 +170,9 @@ export function PoiEditor({ tripId, poi, draft, onSaved, onClose }: Props) {
 }
 
 /** Fiche d'un lieu en lecture seule (lecteurs). */
-export function PoiDetails({ tripId, poi, onClose }: { tripId: string; poi: Poi; onClose: () => void }) {
+export function PoiDetails({ tripId, poi }: { tripId: string; poi: Poi }) {
   return (
     <div className="poi-details">
-      <h3>
-        {t.categoryIcons[poi.category]} {poi.name}
-      </h3>
-      <p className="muted small">
-        {t.categories[poi.category]} · {t.pois.minutes(poi.duration_min)}
-        {poi.created_by_name && ` · ${t.pois.addedBy(poi.created_by_name)}`}
-      </p>
       {poi.address && <p className="small">{poi.address}</p>}
       {poi.opening_hours ? (
         <>
@@ -199,9 +192,6 @@ export function PoiDetails({ tripId, poi, onClose }: { tripId: string; poi: Poi;
         </p>
       )}
       {poi.notes && <p className="small pre-line">{poi.notes}</p>}
-      <button type="button" onClick={onClose}>
-        {t.pois.close}
-      </button>
     </div>
   )
 }

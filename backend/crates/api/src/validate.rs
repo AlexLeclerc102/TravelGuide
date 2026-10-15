@@ -128,6 +128,10 @@ pub fn address(raw: &str) -> Result<String, AppError> {
     bounded_text(raw, 0, 500, "l'adresse")
 }
 
+pub fn review_comment(raw: &str) -> Result<String, AppError> {
+    bounded_text(raw, 0, 2000, "le commentaire")
+}
+
 pub fn notes(raw: &str) -> Result<String, AppError> {
     bounded_text(raw, 0, 2000, "les notes")
 }

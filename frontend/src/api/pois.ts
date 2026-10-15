@@ -38,6 +38,28 @@ export interface Place {
 
 export type HoursStatus = 'none' | 'valid' | 'invalid'
 
+/** Synthèse des notes du groupe (désaccord : écart d'au moins 2 points). */
+export interface GroupRating {
+  count: number
+  average: number | null
+  min: number | null
+  max: number | null
+  disagreement: boolean
+}
+
+export interface MyReview {
+  rating: number
+  comment: string
+}
+
+export interface Review {
+  user_id: string
+  display_name: string
+  rating: number
+  comment: string
+  updated_at: string
+}
+
 export interface Poi {
   id: string
   trip_id: string
@@ -54,6 +76,8 @@ export interface Poi {
   website: string | null
   notes: string
   osm: OsmRef | null
+  rating: GroupRating
+  my_review: MyReview | null
   version: number
   created_by: string | null
   created_by_name: string | null
@@ -101,6 +125,7 @@ const json = (method: string, body: unknown): RequestInit => ({ method, body: JS
 
 export const poiKeys = {
   list: (tripId: string) => [...tripKeys.one(tripId), 'pois'] as const,
+  reviews: (tripId: string, poiId: string) => [...tripKeys.one(tripId), 'pois', poiId, 'reviews'] as const,
   opening: (tripId: string, value: string, country: string | null) =>
     [...tripKeys.one(tripId), 'opening', value, country] as const,
 }
@@ -182,3 +207,39 @@ export const useOpeningPreview = (tripId: string, value: string, country: string
     enabled: value.trim().length > 0,
     staleTime: Infinity,
   })
+
+export const useReviews = (tripId: string, poiId: string) =>
+  useQuery({
+    queryKey: poiKeys.reviews(tripId, poiId),
+    queryFn: () => apiFetch<Review[]>(`/trips/${tripId}/pois/${poiId}/reviews`),
+  })
+
+/** Donne, modifie (`review`) ou retire (`null`) mon avis ; le serveur renvoie le POI recalculé. */
+export function useSaveMyReview(tripId: string, poiId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (review: MyReview | null) =>
+      apiFetch<Poi>(
+        `/trips/${tripId}/pois/${poiId}/reviews/me`,
+        review ? json('PUT', review) : { method: 'DELETE' },
+      ),
+    onSuccess: (poi) => {
+      qc.setQueryData<Poi[]>(poiKeys.list(tripId), (list) => list?.map((p) => (p.id === poi.id ? poi : p)))
+      qc.invalidateQueries({ queryKey: poiKeys.reviews(tripId, poiId) })
+    },
+  })
+}
+
+export type PoiSort = 'added' | 'rating' | 'disagreement'
+
+/** Tri de la liste : ordre d'ajout, meilleure note du groupe, ou désaccords d'abord. */
+export function sortPois(pois: Poi[], sort: PoiSort): Poi[] {
+  if (sort === 'added') return pois
+  const avg = (p: Poi) => p.rating.average ?? -1
+  const spread = (p: Poi) => (p.rating.max ?? 0) - (p.rating.min ?? 0)
+  return [...pois].sort((a, b) =>
+    sort === 'rating'
+      ? avg(b) - avg(a) || b.rating.count - a.rating.count
+      : Number(b.rating.disagreement) - Number(a.rating.disagreement) || spread(b) - spread(a) || avg(b) - avg(a),
+  )
+}

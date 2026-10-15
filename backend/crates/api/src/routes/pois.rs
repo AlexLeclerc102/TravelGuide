@@ -84,7 +84,9 @@ async fn list_pois(
 ) -> AppResult<Json<Vec<Poi>>> {
     trips::require_role(&state.db, trip_id, current.user.id, Role::Viewer).await?;
     let dates = pois::trip_dates(&state.db, trip_id).await?;
-    Ok(Json(pois::list(&state.db, trip_id, dates).await?))
+    Ok(Json(
+        pois::list(&state.db, trip_id, current.user.id, dates).await?,
+    ))
 }
 
 /// Ajoute un POI (éditeur).
@@ -157,7 +159,7 @@ async fn create_poi(
     .await
     .map_err(pois::map_duplicate)?;
     let dates = pois::trip_dates(&mut *tx, trip_id).await?;
-    let poi = pois::get(&mut *tx, trip_id, poi_id, dates).await?;
+    let poi = pois::get(&mut *tx, trip_id, poi_id, current.user.id, dates).await?;
     tx.commit().await?;
     tracing::info!(%trip_id, %poi_id, "POI ajouté");
     Ok((StatusCode::CREATED, Json(poi)))
@@ -174,7 +176,9 @@ async fn get_poi(
 ) -> AppResult<Json<Poi>> {
     trips::require_role(&state.db, trip_id, current.user.id, Role::Viewer).await?;
     let dates = pois::trip_dates(&state.db, trip_id).await?;
-    Ok(Json(pois::get(&state.db, trip_id, poi_id, dates).await?))
+    Ok(Json(
+        pois::get(&state.db, trip_id, poi_id, current.user.id, dates).await?,
+    ))
 }
 
 /// Modifie un POI (éditeur) ; `version` doit correspondre à la version actuelle.
@@ -191,7 +195,7 @@ async fn update_poi(
 ) -> AppResult<Json<Poi>> {
     trips::require_role(&state.db, trip_id, current.user.id, Role::Editor).await?;
     let dates = pois::trip_dates(&state.db, trip_id).await?;
-    let cur = pois::get(&state.db, trip_id, poi_id, dates).await?;
+    let cur = pois::get(&state.db, trip_id, poi_id, current.user.id, dates).await?;
 
     let name = match req.name {
         Some(n) => validate::poi_name(&n)?,
@@ -244,7 +248,9 @@ async fn update_poi(
             "ce lieu a été modifié entre-temps, rechargez-le".into(),
         ));
     }
-    Ok(Json(pois::get(&state.db, trip_id, poi_id, dates).await?))
+    Ok(Json(
+        pois::get(&state.db, trip_id, poi_id, current.user.id, dates).await?,
+    ))
 }
 
 /// Supprime un POI (éditeur).

@@ -3,16 +3,19 @@ import { errorMessage } from '../../api/errors'
 import {
   placeToInput,
   sameOsm,
+  sortPois,
   useCreatePoi,
   usePlaceSearch,
   type Bounds,
   type Poi,
   type PoiInput,
+  type PoiSort,
 } from '../../api/pois'
 import type { Trip } from '../../api/trips'
 import { t } from '../../i18n/fr'
-import { formatDate } from '../../lib/format'
+import { formatDate, formatRating } from '../../lib/format'
 import { PoiDetails, PoiEditor } from './PoiEditor'
+import { ReviewsSection } from './ReviewsSection'
 
 export type Selection = { kind: 'poi'; id: string } | { kind: 'draft'; draft: PoiInput } | null
 
@@ -36,6 +39,8 @@ function closedSummary(dates: string[]) {
 export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeChange, locating, locateError, bounds }: Props) {
   const canEdit = trip.my_role !== 'viewer'
   const selectedPoi = selection?.kind === 'poi' ? pois.find((p) => p.id === selection.id) : undefined
+  const [sort, setSort] = useState<PoiSort>('added')
+  const sorted = sortPois(pois, sort)
 
   return (
     <div className="poi-panel">
@@ -76,30 +81,63 @@ export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeCh
         </section>
       )}
       {selectedPoi && (
-        <section className="card selected-card">
+        <section className="card selected-card" aria-label={selectedPoi.name}>
+          <div className="selected-header">
+            <div>
+              <h3>
+                {t.categoryIcons[selectedPoi.category]} {selectedPoi.name}
+              </h3>
+              <p className="muted small">
+                {t.categories[selectedPoi.category]} · {t.pois.minutes(selectedPoi.duration_min)}
+                {selectedPoi.created_by_name && ` · ${t.pois.addedBy(selectedPoi.created_by_name)}`}
+              </p>
+            </div>
+            <button type="button" className="icon-button" aria-label={t.pois.close} onClick={() => onSelect(null)}>
+              ×
+            </button>
+          </div>
+          {/* Noter est plus fréquent que modifier : les avis d'abord, la modification repliée. */}
+          <ReviewsSection tripId={trip.id} poi={selectedPoi} />
           {canEdit ? (
-            <PoiEditor
-              key={`${selectedPoi.id}:${selectedPoi.version}`}
-              tripId={trip.id}
-              poi={selectedPoi}
-              onSaved={() => undefined}
-              onClose={() => onSelect(null)}
-            />
+            <details className="edit-details">
+              <summary>{t.pois.editDetails}</summary>
+              <PoiEditor
+                key={`${selectedPoi.id}:${selectedPoi.version}`}
+                tripId={trip.id}
+                poi={selectedPoi}
+                onSaved={() => undefined}
+                onClose={() => onSelect(null)}
+              />
+            </details>
           ) : (
-            <PoiDetails tripId={trip.id} poi={selectedPoi} onClose={() => onSelect(null)} />
+            <PoiDetails tripId={trip.id} poi={selectedPoi} />
           )}
         </section>
       )}
 
       <section>
-        <h2 className="section-title">{t.pois.listTitle(pois.length)}</h2>
+        <div className="list-header">
+          <h2 className="section-title">{t.pois.listTitle(pois.length)}</h2>
+          {pois.length > 1 && (
+            <label className="small">
+              {t.reviews.sort}{' '}
+              <select value={sort} onChange={(e) => setSort(e.target.value as PoiSort)}>
+                {(['added', 'rating', 'disagreement'] as PoiSort[]).map((s) => (
+                  <option key={s} value={s}>
+                    {t.reviews.sorts[s]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
         {pois.length === 0 ? (
           <p className="muted small">
             {t.pois.empty} {canEdit && t.pois.emptyEditor}
           </p>
         ) : (
           <ul className="poi-list">
-            {pois.map((p) => (
+            {sorted.map((p) => (
               <li key={p.id}>
                 <button
                   type="button"
@@ -113,6 +151,15 @@ export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeCh
                     <strong>{p.name}</strong>
                     <span className="muted small">
                       {t.categories[p.category]} · {t.pois.minutes(p.duration_min)}
+                    </span>
+                    <span className="small rating-line">
+                      {p.rating.average !== null && (
+                        <span>
+                          ★ {formatRating(p.rating.average)} · {t.reviews.count(p.rating.count)}
+                        </span>
+                      )}
+                      {p.rating.disagreement && <span className="tag tag-disagreement">⚡ {t.reviews.disagreement}</span>}
+                      {!p.my_review && <span className="muted">{t.reviews.toRate}</span>}
                     </span>
                     {p.closed_dates.length > 0 && <span className="small warning-text">{closedSummary(p.closed_dates)}</span>}
                     {p.opening_hours_status === 'invalid' && <span className="small warning-text">{t.pois.hoursInvalid}</span>}

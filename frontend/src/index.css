@@ -185,3 +185,33 @@ button.danger-outline { color: var(--error); border-color: var(--error); }
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.35); cursor: pointer;
 }
 .poi-marker.selected { border-color: #b45309; box-shadow: 0 0 0 5px rgb(180 83 9 / 0.4); z-index: 2; }
+
+/* Avis (incrément 4) */
+.stars { color: #d97706; letter-spacing: 0.05em; }
+.stars-empty { color: var(--border); }
+.star-input { display: inline-flex; gap: 0.1rem; }
+.star-input button {
+  border: none; background: none; padding: 0 0.1rem; font-size: 1.5rem; line-height: 1;
+  color: var(--border); cursor: pointer;
+}
+.star-input button.on { color: #d97706; }
+.star-input button:focus-visible { outline: 2px solid var(--accent); border-radius: 4px; }
+.reviews { display: grid; gap: 0.5rem; margin-top: 0.6rem; }
+.reviews h3, .reviews h4 { margin: 0; }
+.group-rating { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+.my-review { gap: 0.5rem; }
+.my-review .row { align-items: center; }
+.review-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.review-list li { border-left: 3px solid var(--border); padding: 0.2rem 0.6rem; }
+.review-list li.extreme { border-left-color: var(--warning); }
+.review-list p { margin: 0.2rem 0 0; }
+.tag-disagreement { color: var(--warning); }
+.rating-line { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.list-header { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.list-header select { padding: 0.2rem 0.4rem; font-size: 0.85rem; }
+.selected-header { display: flex; justify-content: space-between; align-items: start; gap: 0.5rem; }
+.selected-header h3 { margin: 0; }
+.selected-header p { margin: 0.2rem 0 0; }
+.icon-button { border: none; background: none; font-size: 1.4rem; line-height: 1; padding: 0 0.3rem; }
+.edit-details, .poi-details { border-top: 1px solid var(--border); margin-top: 0.8rem; padding-top: 0.6rem; }
+.edit-details summary { cursor: pointer; color: var(--accent); margin-bottom: 0.6rem; }

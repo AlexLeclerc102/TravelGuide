@@ -16,3 +16,6 @@ export function dayCount(start: string, end: string) {
   }
   return Math.round((toUtc(end) - toUtc(start)) / 86_400_000) + 1
 }
+
+/** Note formatée à la française, une décimale au plus (ex. « 4,3 »). */
+export const formatRating = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 1 })

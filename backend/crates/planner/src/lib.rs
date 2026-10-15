@@ -5,3 +5,4 @@
 //! itinéraire de façon déterministe. Elle est testée unitairement.
 
 pub mod geo;
+pub mod ratings;

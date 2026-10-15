@@ -34,6 +34,10 @@ pub struct Poi {
     pub website: Option<String>,
     pub notes: String,
     pub osm: Option<OsmRef>,
+    /// Notes du groupe.
+    pub rating: GroupRating,
+    /// Avis de l'utilisateur courant, s'il en a donné un.
+    pub my_review: Option<MyReview>,
     /// Version pour le verrouillage optimiste.
     pub version: i64,
     pub created_by: Option<Uuid>,
@@ -42,6 +46,36 @@ pub struct Poi {
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
+}
+
+/// Synthèse des notes du groupe (définition partagée avec le planificateur).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GroupRating {
+    pub count: usize,
+    /// Moyenne de 1 à 5, absente sans avis.
+    pub average: Option<f64>,
+    pub min: Option<u8>,
+    pub max: Option<u8>,
+    /// Écart d'au moins 2 points entre la note la plus basse et la plus haute.
+    pub disagreement: bool,
+}
+
+impl From<planner::ratings::RatingSummary> for GroupRating {
+    fn from(s: planner::ratings::RatingSummary) -> Self {
+        Self {
+            count: s.count,
+            average: s.average,
+            min: s.min,
+            max: s.max,
+            disagreement: s.disagreement,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MyReview {
+    pub rating: u8,
+    pub comment: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -60,6 +94,9 @@ struct PoiRow {
     notes: String,
     osm_type: Option<String>,
     osm_id: Option<i64>,
+    ratings: Vec<i16>,
+    my_rating: Option<i16>,
+    my_comment: Option<String>,
     version: i64,
     created_by: Option<Uuid>,
     created_by_name: Option<String>,
@@ -97,6 +134,11 @@ impl PoiRow {
             website: self.website,
             notes: self.notes,
             osm,
+            rating: planner::ratings::summarize(&to_u8(&self.ratings)).into(),
+            my_review: self.my_rating.map(|r| MyReview {
+                rating: r as u8,
+                comment: self.my_comment.unwrap_or_default(),
+            }),
             version: self.version,
             created_by: self.created_by,
             created_by_name: self.created_by_name,
@@ -106,13 +148,25 @@ impl PoiRow {
     }
 }
 
+/// Notes stockées en `smallint` (contrainte 1 à 5 en base).
+fn to_u8(ratings: &[i16]) -> Vec<u8> {
+    ratings.iter().map(|&r| r as u8).collect()
+}
+
+/// `$1` : utilisateur courant (pour `my_review`).
 const POI_SELECT: &str = "
     SELECT p.id, p.trip_id, p.name, p.category,
            ST_Y(p.location::geometry) AS lat, ST_X(p.location::geometry) AS lon,
            p.address, p.duration_min, p.opening_hours, p.country_code, p.website, p.notes,
-           p.osm_type, p.osm_id, p.version, p.created_by, u.display_name AS created_by_name,
+           p.osm_type, p.osm_id,
+           COALESCE((SELECT array_agg(r.rating) FROM reviews r WHERE r.poi_id = p.id), '{}')
+               AS ratings,
+           mr.rating AS my_rating, mr.comment AS my_comment,
+           p.version, p.created_by, u.display_name AS created_by_name,
            p.created_at, p.updated_at
-    FROM pois p LEFT JOIN users u ON u.id = p.created_by";
+    FROM pois p
+    LEFT JOIN users u ON u.id = p.created_by
+    LEFT JOIN reviews mr ON mr.poi_id = p.id AND mr.user_id = $1";
 
 /// Dates de début et de fin du voyage.
 pub async fn trip_dates(db: impl PgExecutor<'_>, trip_id: Uuid) -> AppResult<(Date, Date)> {
@@ -123,14 +177,17 @@ pub async fn trip_dates(db: impl PgExecutor<'_>, trip_id: Uuid) -> AppResult<(Da
         .ok_or(AppError::NotFound)
 }
 
+/// POI du voyage, vus par `viewer` (pour `my_review`).
 pub async fn list(
     db: impl PgExecutor<'_>,
     trip_id: Uuid,
+    viewer: Uuid,
     trip_dates: (Date, Date),
 ) -> AppResult<Vec<Poi>> {
     let rows: Vec<PoiRow> = sqlx::query_as(&format!(
-        "{POI_SELECT} WHERE p.trip_id = $1 ORDER BY p.created_at, p.id"
+        "{POI_SELECT} WHERE p.trip_id = $2 ORDER BY p.created_at, p.id"
     ))
+    .bind(viewer)
     .bind(trip_id)
     .fetch_all(db)
     .await?;
@@ -142,10 +199,12 @@ pub async fn get(
     db: impl PgExecutor<'_>,
     trip_id: Uuid,
     poi_id: Uuid,
+    viewer: Uuid,
     trip_dates: (Date, Date),
 ) -> AppResult<Poi> {
     let row: Option<PoiRow> =
-        sqlx::query_as(&format!("{POI_SELECT} WHERE p.trip_id = $1 AND p.id = $2"))
+        sqlx::query_as(&format!("{POI_SELECT} WHERE p.trip_id = $2 AND p.id = $3"))
+            .bind(viewer)
             .bind(trip_id)
             .bind(poi_id)
             .fetch_optional(db)

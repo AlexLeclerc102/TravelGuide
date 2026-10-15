@@ -144,13 +144,24 @@ async fn remove_member(
     } else if my_role != Role::Organizer {
         return Err(AppError::Forbidden);
     }
+    let mut tx = state.db.begin().await?;
     let removed = sqlx::query("DELETE FROM trip_members WHERE trip_id = $1 AND user_id = $2")
         .bind(trip_id)
         .bind(user_id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     if removed.rows_affected() == 0 {
         return Err(AppError::NotFound);
     }
+    // Ses avis ne comptent plus dans les notes du groupe.
+    sqlx::query(
+        "DELETE FROM reviews WHERE user_id = $1
+         AND poi_id IN (SELECT id FROM pois WHERE trip_id = $2)",
+    )
+    .bind(user_id)
+    .bind(trip_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }

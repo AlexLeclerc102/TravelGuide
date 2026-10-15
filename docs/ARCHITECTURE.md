@@ -100,3 +100,21 @@
 - **Carte** : le worker MapLibre est fourni explicitement (`setWorkerUrl` + import `?url`), sinon
   il est introuvable sous Vite (fond de carte vide). Sans WebGL, un message remplace la carte et
   la liste reste utilisable.
+
+## Avis (incrément 4)
+
+- **Table `reviews`** : un avis par membre et par POI (clé `(poi_id, user_id)`), note 1–5 et
+  commentaire (2 000 caractères max). Supprimés avec le POI, avec le compte (RGPD) et **quand le
+  membre quitte le voyage ou en est retiré** (les notes du groupe ne reflètent que les membres
+  actuels). L'export RGPD inclut ses avis.
+- **Droits** : tous les membres, **lecteurs compris**, donnent leur avis (opinion personnelle, pas
+  une modification du voyage) et voient celui des autres (nom affiché, jamais l'email). Chacun ne
+  modifie que le sien (`PUT/DELETE /trips/{t}/pois/{p}/reviews/me`, dernière écriture gagnante).
+- **Synthèse** (`planner::ratings::summarize`, partagée avec le futur algorithme d'itinéraire) :
+  nombre d'avis, moyenne, min, max et **désaccord = au moins deux avis et un écart max − min ≥ 2**
+  (constante `DISAGREEMENT_SPREAD`). Chaque POI renvoie `rating` et `my_review` ; enregistrer ou
+  retirer son avis renvoie le POI recalculé.
+- **Neutralité** : seules les notes des membres comptent ; aucune note externe ni sponsorisée.
+- **Interface** : fiche du lieu avec les avis en premier (moyenne, désaccord expliqué, avis
+  extrêmes mis en évidence), la modification du lieu étant repliée ; liste avec note du groupe,
+  badge « Désaccord », rappel « À noter », et tri par ordre d'ajout, note ou désaccord.

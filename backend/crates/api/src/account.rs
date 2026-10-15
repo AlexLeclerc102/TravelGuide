@@ -17,6 +17,19 @@ pub struct AccountExport {
     pub trips: Vec<MembershipExport>,
     /// Lieux ajoutés par l'utilisateur (ils restent dans les voyages, sans auteur, après suppression du compte).
     pub pois_created: Vec<PoiExport>,
+    /// Mes avis (supprimés avec le compte).
+    pub reviews: Vec<ReviewExport>,
+}
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct ReviewExport {
+    pub trip_id: Uuid,
+    pub poi_id: Uuid,
+    pub poi_name: String,
+    pub rating: i16,
+    pub comment: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -71,12 +84,21 @@ pub async fn export(db: &PgPool, user: User) -> sqlx::Result<AccountExport> {
     .bind(user.id)
     .fetch_all(db)
     .await?;
+    let reviews = sqlx::query_as(
+        "SELECT p.trip_id, r.poi_id, p.name AS poi_name, r.rating, r.comment, r.updated_at
+         FROM reviews r JOIN pois p ON p.id = r.poi_id
+         WHERE r.user_id = $1 ORDER BY r.updated_at",
+    )
+    .bind(user.id)
+    .fetch_all(db)
+    .await?;
     Ok(AccountExport {
         exported_at: OffsetDateTime::now_utc(),
         user,
         sessions,
         trips,
         pois_created,
+        reviews,
     })
 }
 
