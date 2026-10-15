@@ -1,9 +1,17 @@
 //! API de l'application collaborative de planification de voyage.
 
+pub mod account;
+pub mod auth;
+pub mod client_ip;
 pub mod config;
+pub mod csrf;
 pub mod error;
+pub mod mail;
+pub mod rate_limit;
 pub mod routes;
 pub mod state;
+pub mod users;
+pub mod validate;
 
 use std::sync::Arc;
 
@@ -17,11 +25,15 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_scalar::{Scalar, Servable};
 
 use crate::config::Config;
+use crate::mail::Mailer;
+use crate::rate_limit::RateLimiter;
 use crate::state::AppState;
 
 #[derive(OpenApi)]
 #[openapi(
-    info(title = "TravelGuide API", description = "Planification collaborative de voyage"),
+    info(title = "TravelGuide API", description = "Planification collaborative de voyage.\n\n\
+        Authentification par cookie de session `tg_session` (HttpOnly). Les requêtes \
+        d'écriture doivent porter un en-tête `Origin` autorisé."),
     servers((url = "/api/v1"))
 )]
 struct ApiDoc;
@@ -30,7 +42,7 @@ struct ApiDoc;
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
 /// Construit l'application Axum complète (utilisée par `main` et par les tests).
-pub fn build_app(db: PgPool, config: Config) -> Router {
+pub fn build_app(db: PgPool, config: Config, mailer: Arc<dyn Mailer>) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(HeaderValue::from_str(&config.public_origin).expect("PUBLIC_ORIGIN invalide"))
         .allow_credentials(true)
@@ -46,6 +58,8 @@ pub fn build_app(db: PgPool, config: Config) -> Router {
     let state = AppState {
         db,
         config: Arc::new(config),
+        mailer,
+        rate_limiter: Arc::new(RateLimiter::default()),
     };
 
     let (api, openapi) = OpenApiRouter::with_openapi(ApiDoc::openapi())
@@ -53,7 +67,13 @@ pub fn build_app(db: PgPool, config: Config) -> Router {
         .split_for_parts();
 
     Router::new()
-        .nest("/api/v1", api)
+        .nest(
+            "/api/v1",
+            api.layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                csrf::verify_origin,
+            )),
+        )
         .merge(Scalar::with_url("/api/docs", openapi.clone()))
         .route(
             "/api/openapi.json",

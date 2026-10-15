@@ -8,8 +8,15 @@ use anyhow::Context;
 pub struct Config {
     pub database_url: String,
     pub bind_addr: SocketAddr,
-    /// Origine publique du frontend (CORS + vérification Origin + liens dans les emails).
+    /// Origine publique du frontend (CORS, vérification `Origin`, liens dans les emails).
     pub public_origin: String,
+    /// Origines supplémentaires autorisées à envoyer des requêtes d'écriture (ex. docs de l'API).
+    pub extra_allowed_origins: Vec<String>,
+    /// Ajoute l'attribut `Secure` au cookie de session (à désactiver uniquement en dev HTTP).
+    pub cookie_secure: bool,
+    /// URL SMTP (`smtp://host:port` ou `smtps://user:pass@host`). Absente : emails journalisés.
+    pub smtp_url: Option<String>,
+    pub mail_from: String,
 }
 
 impl Config {
@@ -20,7 +27,35 @@ impl Config {
                 .parse()
                 .context("BIND_ADDR invalide")?,
             public_origin: optional("PUBLIC_ORIGIN", "http://localhost:5173"),
+            extra_allowed_origins: optional("EXTRA_ALLOWED_ORIGINS", "")
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            cookie_secure: optional("COOKIE_SECURE", "true")
+                .parse()
+                .context("COOKIE_SECURE doit valoir true ou false")?,
+            smtp_url: std::env::var("SMTP_URL").ok().filter(|s| !s.is_empty()),
+            mail_from: optional("MAIL_FROM", "TravelGuide <no-reply@travelguide.local>"),
         })
+    }
+
+    /// Configuration minimale pour les tests.
+    pub fn for_tests() -> Self {
+        Self {
+            database_url: String::new(),
+            bind_addr: "127.0.0.1:0".parse().expect("adresse valide"),
+            public_origin: "http://localhost:5173".into(),
+            extra_allowed_origins: vec![],
+            cookie_secure: false,
+            smtp_url: None,
+            mail_from: "TravelGuide <no-reply@travelguide.local>".into(),
+        }
+    }
+
+    pub fn is_allowed_origin(&self, origin: &str) -> bool {
+        origin == self.public_origin || self.extra_allowed_origins.iter().any(|o| o == origin)
     }
 }
 
