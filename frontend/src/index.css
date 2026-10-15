@@ -270,3 +270,24 @@ button.danger-outline { color: var(--error); border-color: var(--error); }
 .stop-name { margin-left: 0; text-align: left; }
 .unscheduled { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.3rem; }
 .unscheduled .link-button { margin-left: 0; }
+
+/* Ajustements manuels (incrément 7) */
+.itinerary-day .day-head { display: flex; gap: 0.5rem; align-items: baseline; justify-content: space-between; }
+.itinerary-day.drop-target { border-style: dashed; border-color: var(--accent); }
+.timeline .stop { position: relative; background: var(--bg); border-radius: 6px; }
+.timeline .stop.dragging { opacity: 0.6; z-index: 3; box-shadow: 0 2px 8px rgb(0 0 0 / 0.25); }
+.timeline .stop.has-issue .time { color: var(--warning); }
+.timeline .stop .time { width: 6.6rem; }
+.drag-handle {
+  border: none; background: none; padding: 0 0.2rem; cursor: grab; touch-action: none;
+  color: var(--muted); font-size: 1rem; line-height: 1;
+}
+.drag-handle:active { cursor: grabbing; }
+.stop-actions { display: inline-flex; gap: 0.15rem; align-items: center; margin-left: auto; }
+.icon-small { border: none; background: none; padding: 0.05rem 0.25rem; font-size: 0.85rem; line-height: 1.2; }
+.icon-small:disabled { opacity: 0.3; }
+.icon-small[aria-pressed='true'] { color: var(--accent); }
+.move-select { padding: 0.1rem 0.2rem; font-size: 0.75rem; max-width: 7.5rem; }
+.drop-hint { border: 1px dashed var(--border); border-radius: 6px; padding: 0.4rem 0.6rem; }
+.unscheduled li { display: flex; gap: 0.4rem; align-items: baseline; flex-wrap: wrap; }
+.unscheduled .move-select { margin-left: auto; }

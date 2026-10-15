@@ -182,5 +182,34 @@
   estimations, lieux hors itinéraire avec la raison, tracé du jour choisi sur la carte, avertissement
   si l'itinéraire est périmé, confirmation avant de régénérer).
 - **Limites connues** : pas de pause repas ; un lieu écarté d'un jour faute de temps n'est pas
-  retenté sur un autre jour (ajustement manuel à l'incrément 7) ; les lieux hors réseau routier
+  retenté sur un autre jour (à placer à la main, voir l'incrément 7) ; les lieux hors réseau routier
   (sommet d'un volcan) sont rejoints au point routier le plus proche.
+
+## Ajustements manuels (incrément 7)
+
+- **Opérations** (éditeurs, toutes avec la `version` de l'itinéraire, **409** si elle a changé) :
+  `POST /trips/{t}/itinerary/moves` (`poi_id`, `date`, `position`) pour réordonner, changer de jour,
+  ajouter un lieu hors itinéraire ou le retirer (`date: null`) ; `PATCH
+  /trips/{t}/itinerary/stops/{poi}` (`locked`) ; `POST /trips/{t}/itinerary/days/{date}/recompute`.
+  Chaque opération incrémente la version et renvoie l'itinéraire complet.
+- **Recalcul sans casser le reste** : seuls les jours touchés (départ et arrivée d'un déplacement,
+  ou le jour demandé) sont recalculés, **dans l'ordre choisi** (`planner::itinerary::time_day`),
+  avec les lieux et réglages actuels (ce qui efface leur signalement « périmé »). Rien n'est
+  retiré : une étape qui ne respecte pas une contrainte est signalée (`issue` :
+  `outside_opening_hours` — visite à l'arrivée —, `after_day_end`), la journée qui déborde aussi
+  (`overtime`, horaires possibles au-delà de 24:00).
+- **Verrou** : une étape verrouillée garde son jour et l'ordre relatif des étapes verrouillées
+  quand on régénère (`Candidate::pinned` à la répartition, `DayProblem::fixed` pour la journée :
+  les autres lieux s'insèrent autour, le 2-opt n'inverse jamais deux étapes verrouillées). Si les
+  étapes verrouillées ne tiennent pas, elles sont gardées et signalées.
+- **Retrait manuel** : raison `removed`, conservée quand on régénère (le lieu reste hors
+  itinéraire jusqu'à ce qu'on le replace à la main).
+- **Concurrence** : chaque écriture (génération ou ajustement) verrouille la ligne du voyage dans
+  une transaction ; la version de l'itinéraire détecte les modifications concurrentes. Les
+  trajets sont calculés dans la transaction (moteur local et cache : court).
+- **Interface** : glisser-déposer `@dnd-kit` (souris, tactile et clavier : Espace, flèches,
+  Espace ; annonces lecteur d'écran en français) dans une journée ou vers une autre (toute la
+  carte d'une journée accepte un dépôt, y compris vide) ; boutons ↑/↓, verrou, « Déplacer… »
+  (autre jour ou retrait), « Ajouter au… » pour les lieux hors itinéraire, « Recalculer ce
+  jour » sur un jour périmé. Affichage optimiste des déplacements (annulé en cas d'erreur, et
+  itinéraire rechargé sur conflit).

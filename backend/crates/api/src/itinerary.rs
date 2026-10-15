@@ -1,19 +1,25 @@
 //! Itinéraire d'un voyage : génération (planificateur + temps de trajet réels),
-//! enregistrement et relecture avec détection des changements survenus depuis.
+//! ajustements manuels, enregistrement et relecture avec détection des changements
+//! survenus depuis le calcul.
+//!
+//! Toute écriture se fait dans une transaction qui verrouille le voyage : générations
+//! et ajustements concurrents s'enchaînent sans se mélanger.
 
 use std::collections::{HashMap, HashSet};
 
 use planner::geo::LatLon;
-use planner::itinerary::{self as plan, Candidate, DayProblem, DaySlot, TravelMatrix, Visit};
+use planner::itinerary::{
+    self as plan, Candidate, DayProblem, DaySlot, StopIssue, TravelMatrix, Visit,
+};
 use planner::travel::{self, Leg, LegSource, Mode};
 use serde::Serialize;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use time::{Date, OffsetDateTime, Time};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::days::{self, TripDay};
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::opening;
 use crate::places::Category;
 use crate::pois::{self, Poi};
@@ -31,6 +37,8 @@ pub enum UnscheduledReason {
     OpeningHours,
     /// Plus de temps disponible : les lieux les mieux notés passent d'abord.
     NoTime,
+    /// Retiré à la main (reste hors itinéraire quand on régénère).
+    Removed,
     /// Ajouté après la génération de l'itinéraire.
     AddedAfter,
 }
@@ -41,6 +49,7 @@ impl UnscheduledReason {
             Self::ClosedAllDays => "closed_all_days",
             Self::OpeningHours => "opening_hours",
             Self::NoTime => "no_time",
+            Self::Removed => "removed",
             Self::AddedAfter => "added_after",
         }
     }
@@ -50,6 +59,7 @@ impl UnscheduledReason {
             "closed_all_days" => Self::ClosedAllDays,
             "opening_hours" => Self::OpeningHours,
             "no_time" => Self::NoTime,
+            "removed" => Self::Removed,
             "added_after" => Self::AddedAfter,
             _ => return None,
         })
@@ -66,13 +76,50 @@ impl From<plan::Unscheduled> for UnscheduledReason {
     }
 }
 
+/// Contrainte qu'une étape placée ou verrouillée à la main ne respecte pas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ItineraryIssue {
+    /// Fermé à l'heure prévue, ou pas assez longtemps pour la visite.
+    OutsideOpeningHours,
+    /// La visite se termine après la fin de la journée.
+    AfterDayEnd,
+}
+
+impl ItineraryIssue {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::OutsideOpeningHours => "outside_opening_hours",
+            Self::AfterDayEnd => "after_day_end",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "outside_opening_hours" => Self::OutsideOpeningHours,
+            "after_day_end" => Self::AfterDayEnd,
+            _ => return None,
+        })
+    }
+}
+
+impl From<StopIssue> for ItineraryIssue {
+    fn from(i: StopIssue) -> Self {
+        match i {
+            StopIssue::OutsideOpeningHours => Self::OutsideOpeningHours,
+            StopIssue::AfterDayEnd => Self::AfterDayEnd,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct UnscheduledPoi {
     pub poi_id: Uuid,
     pub reason: UnscheduledReason,
 }
 
-/// Étape de la journée. Les heures sont au format `HH:MM` (heure locale du voyage).
+/// Étape de la journée. Les heures sont au format `HH:MM` (heure locale du voyage ;
+/// au-delà de `24:00` si une journée chargée à la main déborde après minuit).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ItineraryStop {
     pub poi_id: Uuid,
@@ -89,7 +136,9 @@ pub struct ItineraryStop {
     /// Trajet depuis l'étape précédente ou l'hébergement (`null` pour une première
     /// visite sans point de départ).
     pub travel: Option<TravelOption>,
+    /// Verrouillée : garde son jour et son ordre quand on régénère.
     pub locked: bool,
+    pub issue: Option<ItineraryIssue>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -114,12 +163,15 @@ pub struct ItineraryDay {
     /// Fin de la journée (arrivée à l'hébergement ou fin de la dernière visite).
     #[schema(example = "17:45")]
     pub finish: String,
-    /// Lieux, réglages ou dates modifiés depuis le calcul de ce jour : à régénérer.
+    /// La journée se termine après `day_end`.
+    pub overtime: bool,
+    /// Lieux, réglages ou dates modifiés depuis le calcul de ce jour : à recalculer.
     pub stale: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Itinerary {
+    /// À renvoyer avec chaque ajustement (verrouillage optimiste).
     pub version: i64,
     #[serde(with = "time::serde::rfc3339")]
     pub generated_at: OffsetDateTime,
@@ -155,160 +207,154 @@ fn day_bases(days: &[TripDay]) -> Vec<(Option<Uuid>, Option<Uuid>)> {
         .collect()
 }
 
-/// Les hébergements ne sont pas des visites.
-fn is_visitable(p: &Poi, bases: &HashSet<Uuid>) -> bool {
-    p.category != Category::Lodging && !bases.contains(&p.id)
-}
-
 fn location(p: &Poi) -> LatLon {
     LatLon::new(p.lat, p.lon)
 }
 
-// --- Génération ------------------------------------------------------------------------
-
-struct PlannedDay {
-    date: Date,
-    modes: Vec<TransportMode>,
-    start: Option<Uuid>,
-    end: Option<Uuid>,
-    stops: Vec<(Uuid, plan::Stop)>,
-    back: Option<(Mode, Leg)>,
+fn modes_of(day: &TripDay) -> Vec<Mode> {
+    day.modes.iter().map(|&m| Mode::from(m)).collect()
 }
 
-/// Génère l'itinéraire complet du voyage et remplace le précédent.
-pub async fn generate(
-    db: &PgPool,
-    routing: &RoutingService,
-    trip_id: Uuid,
-    user_id: Uuid,
-) -> AppResult<()> {
-    // Instant de lecture : un lieu modifié après sera signalé comme changé.
-    let read_at: OffsetDateTime = sqlx::query_scalar("SELECT now()").fetch_one(db).await?;
-    let trip = trips::get_for_user(db, trip_id, user_id).await?;
-    let days = days::list(db, trip_id).await?;
-    let all_pois = pois::list(db, trip_id, user_id, (trip.start_date, trip.end_date)).await?;
-    let by_id: HashMap<Uuid, &Poi> = all_pois.iter().map(|p| (p.id, p)).collect();
+// --- Contexte de calcul ------------------------------------------------------------------
 
-    let bases = day_bases(&days);
-    let base_ids: HashSet<Uuid> = bases.iter().flat_map(|&(s, e)| [s, e]).flatten().collect();
-    let visitable: Vec<&Poi> = all_pois
-        .iter()
-        .filter(|p| is_visitable(p, &base_ids))
-        .collect();
+/// État du voyage lu au début d'un calcul, dans la transaction.
+struct Context {
+    trip: Trip,
+    days: Vec<TripDay>,
+    bases: Vec<(Option<Uuid>, Option<Uuid>)>,
+    pois: HashMap<Uuid, Poi>,
+    /// Instant de lecture : un lieu modifié après sera signalé comme changé.
+    read_at: OffsetDateTime,
+}
 
-    // Plages d'ouverture de chaque lieu, jour par jour (`None` : horaires inconnus).
-    let windows: Vec<Option<Vec<Vec<plan::Window>>>> = visitable
-        .iter()
-        .map(
-            |p| match opening::parse(p.opening_hours.as_deref(), p.country_code.as_deref()) {
-                opening::Parsed::Valid(oh) => Some(
-                    days.iter()
-                        .map(|d| opening::day_windows(&oh, d.date))
-                        .collect(),
-                ),
-                _ => None,
-            },
+impl Context {
+    async fn load(conn: &mut PgConnection, trip_id: Uuid, user_id: Uuid) -> AppResult<Self> {
+        // Verrou sur le voyage : générations et ajustements concurrents s'enchaînent.
+        sqlx::query("SELECT 1 FROM trips WHERE id = $1 FOR UPDATE")
+            .bind(trip_id)
+            .execute(&mut *conn)
+            .await?;
+        let read_at: OffsetDateTime = sqlx::query_scalar("SELECT now()")
+            .fetch_one(&mut *conn)
+            .await?;
+        let trip = trips::get_for_user(&mut *conn, trip_id, user_id).await?;
+        let days = days::list(&mut *conn, trip_id).await?;
+        let pois = pois::list(
+            &mut *conn,
+            trip_id,
+            user_id,
+            (trip.start_date, trip.end_date),
         )
+        .await?
+        .into_iter()
+        .map(|p| (p.id, p))
         .collect();
-
-    let budget = seconds(trip.day_end).saturating_sub(seconds(trip.day_start));
-    let candidates: Vec<Candidate> = visitable
-        .iter()
-        .zip(&windows)
-        .map(|(p, w)| Candidate {
-            location: location(p),
-            duration_s: p.duration_min.max(0) as u32 * 60,
-            score: plan::score(p.rating.average),
-            closed: match w {
-                Some(per_day) => per_day.iter().map(Vec::is_empty).collect(),
-                None => vec![false; days.len()],
-            },
+        Ok(Self {
+            bases: day_bases(&days),
+            trip,
+            days,
+            pois,
+            read_at,
         })
-        .collect();
-    let slots: Vec<DaySlot> = days
-        .iter()
-        .zip(&bases)
-        .map(|(day, &(start, end))| {
-            let place = |id: Option<Uuid>| id.and_then(|id| by_id.get(&id)).map(|p| location(p));
-            let mode = plan::fastest_mode(&modes_of(day));
-            // Changement d'hébergement : le trajet entre les deux est pris sur la journée.
-            let transfer = match (place(start), place(end)) {
-                (Some(a), Some(b)) => travel::straight_line(mode, a, b).duration_s,
-                _ => 0,
-            };
-            DaySlot {
-                anchor: place(end).or(place(start)),
-                budget_s: budget.saturating_sub(transfer),
-                mode,
-            }
-        })
-        .collect();
-    let assignment = plan::assign_days(&candidates, &slots);
+    }
 
-    let mut unscheduled: Vec<(Uuid, UnscheduledReason)> = assignment
-        .unassigned
-        .iter()
-        .map(|&(i, r)| (visitable[i].id, r.into()))
-        .collect();
-    let mut planned = Vec::with_capacity(days.len());
-    for (d, day) in days.iter().enumerate() {
-        let (start, end) = bases[d];
-        let members = &assignment.days[d];
-        let visits: Vec<Visit> = members
+    fn base_ids(&self) -> HashSet<Uuid> {
+        self.bases
             .iter()
-            .map(|&i| Visit {
-                duration_s: candidates[i].duration_s,
-                score: candidates[i].score,
-                windows: windows[i].as_ref().map(|w| w[d].clone()),
+            .flat_map(|&(s, e)| [s, e])
+            .flatten()
+            .collect()
+    }
+
+    /// Lieu que l'on peut visiter (ni hébergement, ni supprimé).
+    fn visitable(&self, id: Uuid) -> Option<&Poi> {
+        self.pois
+            .get(&id)
+            .filter(|p| p.category != Category::Lodging && !self.base_ids().contains(&id))
+    }
+
+    fn day_index(&self, date: Date) -> Option<usize> {
+        self.days.iter().position(|d| d.date == date)
+    }
+
+    fn place(&self, id: Option<Uuid>) -> Option<LatLon> {
+        id.and_then(|id| self.pois.get(&id)).map(location)
+    }
+
+    /// Plages d'ouverture d'un lieu pour chaque jour (`None` : horaires inconnus).
+    fn windows(&self, p: &Poi) -> Option<Vec<Vec<plan::Window>>> {
+        match opening::parse(p.opening_hours.as_deref(), p.country_code.as_deref()) {
+            opening::Parsed::Valid(oh) => Some(
+                self.days
+                    .iter()
+                    .map(|d| opening::day_windows(&oh, d.date))
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+
+    fn duration_s(p: &Poi) -> u32 {
+        p.duration_min.max(0) as u32 * 60
+    }
+}
+
+/// Une journée prête à être ordonnée ou minutée : visites, nœuds et trajets.
+struct DayInputs {
+    visits: Vec<Visit>,
+    matrix: TravelMatrix,
+    start: Option<usize>,
+    end: Option<usize>,
+    day_start_s: u32,
+    day_end_s: u32,
+}
+
+impl DayInputs {
+    /// `members` : lieux de la journée ; les nœuds `0..members.len()` sont ces lieux,
+    /// suivis du départ et de l'arrivée (un seul nœud s'ils sont identiques).
+    async fn build(ctx: &Context, routing: &RoutingService, d: usize, members: &[&Poi]) -> Self {
+        let (start, end) = ctx.bases[d];
+        let visits = members
+            .iter()
+            .map(|p| Visit {
+                duration_s: Context::duration_s(p),
+                score: plan::score(p.rating.average),
+                windows: ctx.windows(p).map(|mut w| w.swap_remove(d)),
             })
             .collect();
-        // Nœuds : les visites, puis le départ et l'arrivée (un seul nœud s'ils sont identiques).
-        let mut nodes: Vec<LatLon> = members.iter().map(|&i| candidates[i].location).collect();
-        let node_of = |id: Option<Uuid>, nodes: &mut Vec<LatLon>| {
-            let p = by_id.get(&id?)?;
-            nodes.push(location(p));
+        let mut nodes: Vec<LatLon> = members.iter().map(|p| location(p)).collect();
+        let mut push = |place: Option<LatLon>| {
+            nodes.push(place?);
             Some(nodes.len() - 1)
         };
-        let start_node = node_of(start, &mut nodes);
+        let start_node = push(ctx.place(start));
         let end_node = if end == start {
             start_node
         } else {
-            node_of(end, &mut nodes)
+            push(ctx.place(end))
         };
-        let modes = modes_of(day);
-        let matrix = travel_matrix(routing, &modes, &nodes).await;
-        let day_plan = plan::schedule_day(&DayProblem {
-            day_start_s: seconds(trip.day_start),
-            day_end_s: seconds(trip.day_end),
-            visits: &visits,
+        let matrix = travel_matrix(routing, &modes_of(&ctx.days[d]), &nodes).await;
+        Self {
+            visits,
+            matrix,
             start: start_node,
             end: end_node,
-            travel: &matrix,
-        });
-        unscheduled.extend(
-            day_plan
-                .unscheduled
-                .iter()
-                .map(|&(v, r)| (visitable[members[v]].id, r.into())),
-        );
-        planned.push(PlannedDay {
-            date: day.date,
-            modes: day.modes.clone(),
-            start,
-            end,
-            stops: day_plan
-                .stops
-                .iter()
-                .map(|s| (visitable[members[s.visit]].id, s.clone()))
-                .collect(),
-            back: day_plan.back,
-        });
+            day_start_s: seconds(ctx.trip.day_start),
+            day_end_s: seconds(ctx.trip.day_end),
+        }
     }
-    save(db, &trip, user_id, read_at, &planned, &unscheduled).await
-}
 
-fn modes_of(day: &TripDay) -> Vec<Mode> {
-    day.modes.iter().map(|&m| Mode::from(m)).collect()
+    fn problem<'a>(&'a self, fixed: &'a [usize]) -> DayProblem<'a> {
+        DayProblem {
+            day_start_s: self.day_start_s,
+            day_end_s: self.day_end_s,
+            visits: &self.visits,
+            start: self.start,
+            end: self.end,
+            travel: &self.matrix,
+            fixed,
+        }
+    }
 }
 
 /// Matrice des trajets d'une journée : pour chaque paire, le mode choisi par la règle
@@ -336,6 +382,52 @@ async fn travel_matrix(routing: &RoutingService, modes: &[Mode], nodes: &[LatLon
     })
 }
 
+// --- Écriture ----------------------------------------------------------------------------
+
+struct PlannedStop {
+    poi_id: Uuid,
+    stop: plan::Stop,
+    locked: bool,
+}
+
+/// Journée calculée, prête à être enregistrée.
+struct PlannedDay {
+    date: Date,
+    modes: Vec<TransportMode>,
+    start: Option<Uuid>,
+    end: Option<Uuid>,
+    stops: Vec<PlannedStop>,
+    back: Option<(Mode, Leg)>,
+}
+
+impl PlannedDay {
+    fn new(
+        ctx: &Context,
+        d: usize,
+        plan: plan::DayPlan,
+        ids: &[Uuid],
+        locked: &HashSet<Uuid>,
+    ) -> Self {
+        let (start, end) = ctx.bases[d];
+        Self {
+            date: ctx.days[d].date,
+            modes: ctx.days[d].modes.clone(),
+            start,
+            end,
+            stops: plan
+                .stops
+                .into_iter()
+                .map(|stop| PlannedStop {
+                    poi_id: ids[stop.visit],
+                    locked: locked.contains(&ids[stop.visit]),
+                    stop,
+                })
+                .collect(),
+            back: plan.back,
+        }
+    }
+}
+
 fn travel_columns(
     t: Option<(Mode, Leg)>,
 ) -> (
@@ -355,102 +447,389 @@ fn travel_columns(
     }
 }
 
-async fn save(
+/// Remplace une journée (et ses étapes) par celle calculée, réglages actuels compris.
+async fn write_day(conn: &mut PgConnection, ctx: &Context, day: &PlannedDay) -> AppResult<()> {
+    let trip_id = ctx.trip.id;
+    sqlx::query("DELETE FROM itinerary_days WHERE trip_id = $1 AND date = $2")
+        .bind(trip_id)
+        .bind(day.date)
+        .execute(&mut *conn)
+        .await?;
+    let modes: Vec<&str> = day.modes.iter().map(|m| m.as_str()).collect();
+    let (back_mode, back_duration, back_distance, back_source) = travel_columns(day.back);
+    sqlx::query(
+        "INSERT INTO itinerary_days (trip_id, date, modes, start_poi_id, end_poi_id,
+             day_start, day_end, computed_at, stop_count,
+             back_mode, back_duration_s, back_distance_m, back_source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+    )
+    .bind(trip_id)
+    .bind(day.date)
+    .bind(&modes)
+    .bind(day.start)
+    .bind(day.end)
+    .bind(ctx.trip.day_start)
+    .bind(ctx.trip.day_end)
+    .bind(ctx.read_at)
+    .bind(day.stops.len() as i16)
+    .bind(back_mode)
+    .bind(back_duration)
+    .bind(back_distance)
+    .bind(back_source)
+    .execute(&mut *conn)
+    .await?;
+    for (position, s) in day.stops.iter().enumerate() {
+        let (mode, duration, distance, source) = travel_columns(s.stop.travel);
+        sqlx::query(
+            "INSERT INTO itinerary_stops (trip_id, date, position, poi_id, arrival_s, start_s, end_s,
+                 travel_mode, travel_duration_s, travel_distance_m, travel_source, locked, issue)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+        )
+        .bind(trip_id)
+        .bind(day.date)
+        .bind(position as i16)
+        .bind(s.poi_id)
+        .bind(s.stop.arrival_s as i32)
+        .bind(s.stop.start_s as i32)
+        .bind(s.stop.end_s as i32)
+        .bind(mode)
+        .bind(duration)
+        .bind(distance)
+        .bind(source)
+        .bind(s.locked)
+        .bind(s.stop.issue.map(|i| ItineraryIssue::from(i).as_str()))
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn set_unscheduled(
+    conn: &mut PgConnection,
+    trip_id: Uuid,
+    poi_id: Uuid,
+    reason: Option<UnscheduledReason>,
+) -> AppResult<()> {
+    match reason {
+        Some(reason) => {
+            sqlx::query(
+                "INSERT INTO itinerary_unscheduled (trip_id, poi_id, reason) VALUES ($1, $2, $3)
+                 ON CONFLICT (trip_id, poi_id) DO UPDATE SET reason = EXCLUDED.reason",
+            )
+            .bind(trip_id)
+            .bind(poi_id)
+            .bind(reason.as_str())
+            .execute(&mut *conn)
+            .await?;
+        }
+        None => {
+            sqlx::query("DELETE FROM itinerary_unscheduled WHERE trip_id = $1 AND poi_id = $2")
+                .bind(trip_id)
+                .bind(poi_id)
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+// --- Génération --------------------------------------------------------------------------
+
+/// Génère l'itinéraire complet du voyage et remplace le précédent. Les étapes
+/// verrouillées gardent leur jour et leur ordre ; les lieux retirés à la main restent
+/// hors itinéraire.
+pub async fn generate(
     db: &PgPool,
-    trip: &Trip,
+    routing: &RoutingService,
+    trip_id: Uuid,
     user_id: Uuid,
-    read_at: OffsetDateTime,
-    days: &[PlannedDay],
-    unscheduled: &[(Uuid, UnscheduledReason)],
 ) -> AppResult<()> {
     let mut tx = db.begin().await?;
-    // Sérialise les générations concurrentes d'un même voyage.
-    sqlx::query("SELECT 1 FROM trips WHERE id = $1 FOR UPDATE")
-        .bind(trip.id)
-        .execute(&mut *tx)
-        .await?;
+    let ctx = Context::load(&mut tx, trip_id, user_id).await?;
+
+    // Choix manuels de l'itinéraire précédent.
+    let locked_rows: Vec<(Date, Uuid)> = sqlx::query_as(
+        "SELECT date, poi_id FROM itinerary_stops WHERE trip_id = $1 AND locked
+         ORDER BY date, position",
+    )
+    .bind(trip_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let removed: HashSet<Uuid> = sqlx::query_scalar(
+        "SELECT poi_id FROM itinerary_unscheduled WHERE trip_id = $1 AND reason = 'removed'",
+    )
+    .bind(trip_id)
+    .fetch_all(&mut *tx)
+    .await?
+    .into_iter()
+    .collect();
+    let pinned: HashMap<Uuid, usize> = locked_rows
+        .iter()
+        .filter(|(_, id)| ctx.visitable(*id).is_some())
+        .filter_map(|(date, id)| Some((*id, ctx.day_index(*date)?)))
+        .collect();
+    let locked: HashSet<Uuid> = pinned.keys().copied().collect();
+
+    // Ordre stable : ordre d'ajout des lieux (celui de `pois::list`).
+    let mut visitable: Vec<&Poi> = ctx
+        .pois
+        .values()
+        .filter(|p| ctx.visitable(p.id).is_some() && !removed.contains(&p.id))
+        .collect();
+    visitable.sort_by_key(|p| (p.created_at, p.id));
+
+    let budget = seconds(ctx.trip.day_end).saturating_sub(seconds(ctx.trip.day_start));
+    let candidates: Vec<Candidate> = visitable
+        .iter()
+        .map(|p| Candidate {
+            location: location(p),
+            duration_s: Context::duration_s(p),
+            score: plan::score(p.rating.average),
+            closed: match ctx.windows(p) {
+                Some(per_day) => per_day.iter().map(Vec::is_empty).collect(),
+                None => vec![false; ctx.days.len()],
+            },
+            pinned: pinned.get(&p.id).copied(),
+        })
+        .collect();
+    let slots: Vec<DaySlot> = ctx
+        .days
+        .iter()
+        .zip(&ctx.bases)
+        .map(|(day, &(start, end))| {
+            let mode = plan::fastest_mode(&modes_of(day));
+            // Changement d'hébergement : le trajet entre les deux est pris sur la journée.
+            let transfer = match (ctx.place(start), ctx.place(end)) {
+                (Some(a), Some(b)) => travel::straight_line(mode, a, b).duration_s,
+                _ => 0,
+            };
+            DaySlot {
+                anchor: ctx.place(end).or(ctx.place(start)),
+                budget_s: budget.saturating_sub(transfer),
+                mode,
+            }
+        })
+        .collect();
+    let assignment = plan::assign_days(&candidates, &slots);
+
+    let mut unscheduled: Vec<(Uuid, UnscheduledReason)> = assignment
+        .unassigned
+        .iter()
+        .map(|&(i, r)| (visitable[i].id, r.into()))
+        .chain(removed.iter().map(|&id| (id, UnscheduledReason::Removed)))
+        .collect();
+    let mut planned = Vec::with_capacity(ctx.days.len());
+    for d in 0..ctx.days.len() {
+        let members: Vec<&Poi> = assignment.days[d].iter().map(|&i| visitable[i]).collect();
+        let ids: Vec<Uuid> = members.iter().map(|p| p.id).collect();
+        // Étapes verrouillées de ce jour, dans leur ordre précédent.
+        let fixed: Vec<usize> = locked_rows
+            .iter()
+            .filter(|(date, _)| *date == ctx.days[d].date)
+            .filter_map(|(_, id)| ids.iter().position(|x| x == id))
+            .collect();
+        let inputs = DayInputs::build(&ctx, routing, d, &members).await;
+        let day_plan = plan::schedule_day(&inputs.problem(&fixed));
+        unscheduled.extend(
+            day_plan
+                .unscheduled
+                .iter()
+                .map(|&(v, r)| (ids[v], r.into())),
+        );
+        planned.push(PlannedDay::new(&ctx, d, day_plan, &ids, &locked));
+    }
+
     let version: i64 = sqlx::query_scalar(
         "SELECT COALESCE((SELECT version FROM itineraries WHERE trip_id = $1), 0) + 1",
     )
-    .bind(trip.id)
+    .bind(trip_id)
     .fetch_one(&mut *tx)
     .await?;
     sqlx::query("DELETE FROM itineraries WHERE trip_id = $1")
-        .bind(trip.id)
+        .bind(trip_id)
         .execute(&mut *tx)
         .await?;
     sqlx::query(
         "INSERT INTO itineraries (trip_id, version, generated_at, generated_by) VALUES ($1, $2, $3, $4)",
     )
-    .bind(trip.id)
+    .bind(trip_id)
     .bind(version)
-    .bind(read_at)
+    .bind(ctx.read_at)
     .bind(user_id)
     .execute(&mut *tx)
     .await?;
-
-    for day in days {
-        let modes: Vec<&str> = day.modes.iter().map(|m| m.as_str()).collect();
-        let (back_mode, back_duration, back_distance, back_source) = travel_columns(day.back);
-        sqlx::query(
-            "INSERT INTO itinerary_days (trip_id, date, modes, start_poi_id, end_poi_id,
-                 day_start, day_end, computed_at, stop_count,
-                 back_mode, back_duration_s, back_distance_m, back_source)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
-        )
-        .bind(trip.id)
-        .bind(day.date)
-        .bind(&modes)
-        .bind(day.start)
-        .bind(day.end)
-        .bind(trip.day_start)
-        .bind(trip.day_end)
-        .bind(read_at)
-        .bind(day.stops.len() as i16)
-        .bind(back_mode)
-        .bind(back_duration)
-        .bind(back_distance)
-        .bind(back_source)
-        .execute(&mut *tx)
-        .await?;
-        for (position, (poi_id, stop)) in day.stops.iter().enumerate() {
-            let (mode, duration, distance, source) = travel_columns(stop.travel);
-            sqlx::query(
-                "INSERT INTO itinerary_stops (trip_id, date, position, poi_id, arrival_s, start_s, end_s,
-                     travel_mode, travel_duration_s, travel_distance_m, travel_source)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
-            )
-            .bind(trip.id)
-            .bind(day.date)
-            .bind(position as i16)
-            .bind(poi_id)
-            .bind(stop.arrival_s as i32)
-            .bind(stop.start_s as i32)
-            .bind(stop.end_s as i32)
-            .bind(mode)
-            .bind(duration)
-            .bind(distance)
-            .bind(source)
-            .execute(&mut *tx)
-            .await?;
-        }
+    for day in &planned {
+        write_day(&mut tx, &ctx, day).await?;
     }
-    for (poi_id, reason) in unscheduled {
-        sqlx::query(
-            "INSERT INTO itinerary_unscheduled (trip_id, poi_id, reason) VALUES ($1, $2, $3)",
-        )
-        .bind(trip.id)
-        .bind(poi_id)
-        .bind(reason.as_str())
-        .execute(&mut *tx)
-        .await?;
+    for &(poi_id, reason) in &unscheduled {
+        set_unscheduled(&mut tx, trip_id, poi_id, Some(reason)).await?;
     }
     tx.commit().await?;
-    tracing::info!(trip_id = %trip.id, version, "itinéraire généré");
+    tracing::info!(%trip_id, version, "itinéraire généré");
     Ok(())
 }
 
-// --- Lecture ---------------------------------------------------------------------------
+// --- Ajustements manuels -------------------------------------------------------------------
+
+/// Modification manuelle de l'itinéraire.
+#[derive(Debug, Clone, Copy)]
+pub enum Adjustment {
+    /// Place un lieu à la position donnée d'un jour (réordonner, changer de jour, ajouter un
+    /// lieu hors itinéraire) ; `date: None` le retire de l'itinéraire.
+    Move {
+        poi_id: Uuid,
+        date: Option<Date>,
+        position: usize,
+    },
+    /// Verrouille ou déverrouille une étape (sans recalcul).
+    Lock { poi_id: Uuid, locked: bool },
+    /// Recalcule une journée dans son ordre actuel, avec les lieux et réglages actuels.
+    Recompute { date: Date },
+}
+
+/// Applique un ajustement si `version` est celle de l'itinéraire, puis recalcule les
+/// horaires des seuls jours touchés (dans l'ordre choisi, contraintes signalées).
+pub async fn adjust(
+    db: &PgPool,
+    routing: &RoutingService,
+    trip_id: Uuid,
+    user_id: Uuid,
+    version: i64,
+    adjustment: Adjustment,
+) -> AppResult<()> {
+    let mut tx = db.begin().await?;
+    let ctx = Context::load(&mut tx, trip_id, user_id).await?;
+    let current: Option<i64> =
+        sqlx::query_scalar("SELECT version FROM itineraries WHERE trip_id = $1")
+            .bind(trip_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    match current {
+        None => return Err(AppError::BadRequest("générez d'abord l'itinéraire".into())),
+        Some(v) if v != version => {
+            return Err(AppError::Conflict(
+                "l'itinéraire a été modifié entre-temps, rechargez-le".into(),
+            ))
+        }
+        Some(_) => {}
+    }
+
+    // Étapes actuelles, jour par jour : (lieu, verrouillé).
+    let rows: Vec<(Date, Uuid, bool)> = sqlx::query_as(
+        "SELECT date, poi_id, locked FROM itinerary_stops WHERE trip_id = $1 ORDER BY date, position",
+    )
+    .bind(trip_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut stops: HashMap<Date, Vec<(Uuid, bool)>> = HashMap::new();
+    for (date, poi_id, locked) in rows {
+        stops.entry(date).or_default().push((poi_id, locked));
+    }
+    let find = |stops: &HashMap<Date, Vec<(Uuid, bool)>>, poi_id: Uuid| {
+        stops.iter().find_map(|(date, list)| {
+            list.iter()
+                .position(|(id, _)| *id == poi_id)
+                .map(|i| (*date, i))
+        })
+    };
+    let not_in_trip = || AppError::BadRequest("cette date ne fait pas partie du voyage".into());
+
+    let mut touched: Vec<Date> = vec![];
+    match adjustment {
+        Adjustment::Move {
+            poi_id,
+            date,
+            position,
+        } => {
+            if ctx.visitable(poi_id).is_none() {
+                return Err(if ctx.pois.contains_key(&poi_id) {
+                    AppError::BadRequest(
+                        "un hébergement n'est pas une étape de l'itinéraire".into(),
+                    )
+                } else {
+                    AppError::NotFound
+                });
+            }
+            if date.is_some_and(|d| ctx.day_index(d).is_none()) {
+                return Err(not_in_trip());
+            }
+            let mut locked = false;
+            if let Some((from, i)) = find(&stops, poi_id) {
+                let list = stops.get_mut(&from).expect("jour trouvé");
+                locked = list.remove(i).1;
+                touched.push(from);
+            }
+            match date {
+                Some(to) => {
+                    let list = stops.entry(to).or_default();
+                    list.insert(position.min(list.len()), (poi_id, locked));
+                    if !touched.contains(&to) {
+                        touched.push(to);
+                    }
+                    set_unscheduled(&mut tx, trip_id, poi_id, None).await?;
+                }
+                None => {
+                    set_unscheduled(&mut tx, trip_id, poi_id, Some(UnscheduledReason::Removed))
+                        .await?
+                }
+            }
+        }
+        Adjustment::Lock { poi_id, locked } => {
+            let (date, _) = find(&stops, poi_id).ok_or(AppError::NotFound)?;
+            sqlx::query(
+                "UPDATE itinerary_stops SET locked = $3 WHERE trip_id = $1 AND poi_id = $2",
+            )
+            .bind(trip_id)
+            .bind(poi_id)
+            .bind(locked)
+            .execute(&mut *tx)
+            .await?;
+            tracing::debug!(%trip_id, %poi_id, %date, locked, "étape (dé)verrouillée");
+        }
+        Adjustment::Recompute { date } => {
+            ctx.day_index(date).ok_or_else(not_in_trip)?;
+            touched.push(date);
+        }
+    }
+
+    for date in touched {
+        // Un jour sorti des dates du voyage n'est plus recalculé (il reste signalé).
+        let Some(d) = ctx.day_index(date) else {
+            continue;
+        };
+        // Les lieux devenus hébergements (ou supprimés) quittent la journée.
+        let list: Vec<(Uuid, bool)> = stops
+            .remove(&date)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(id, _)| ctx.visitable(*id).is_some())
+            .collect();
+        let members: Vec<&Poi> = list
+            .iter()
+            .filter_map(|(id, _)| ctx.visitable(*id))
+            .collect();
+        let ids: Vec<Uuid> = list.iter().map(|(id, _)| *id).collect();
+        let locked: HashSet<Uuid> = list.iter().filter(|(_, l)| *l).map(|(id, _)| *id).collect();
+        let inputs = DayInputs::build(&ctx, routing, d, &members).await;
+        let order: Vec<usize> = (0..members.len()).collect();
+        let day_plan = plan::time_day(&inputs.problem(&[]), &order);
+        write_day(
+            &mut tx,
+            &ctx,
+            &PlannedDay::new(&ctx, d, day_plan, &ids, &locked),
+        )
+        .await?;
+    }
+    sqlx::query("UPDATE itineraries SET version = version + 1 WHERE trip_id = $1")
+        .bind(trip_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    tracing::info!(%trip_id, ?adjustment, "itinéraire ajusté");
+    Ok(())
+}
+
+// --- Lecture -----------------------------------------------------------------------------
 
 #[derive(sqlx::FromRow)]
 struct HeadRow {
@@ -487,6 +866,7 @@ struct StopRow {
     travel_distance_m: Option<i32>,
     travel_source: Option<String>,
     locked: bool,
+    issue: Option<String>,
 }
 
 fn travel_from_columns(
@@ -526,7 +906,7 @@ pub async fn load(db: &PgPool, trip: &Trip) -> AppResult<Option<Itinerary>> {
     .await?;
     let stop_rows: Vec<StopRow> = sqlx::query_as(
         "SELECT date, poi_id, arrival_s, start_s, end_s, travel_mode,
-                travel_duration_s, travel_distance_m, travel_source, locked
+                travel_duration_s, travel_distance_m, travel_source, locked, issue
          FROM itinerary_stops WHERE trip_id = $1 ORDER BY date, position",
     )
     .bind(trip.id)
@@ -576,6 +956,7 @@ pub async fn load(db: &PgPool, trip: &Trip) -> AppResult<Option<Itinerary>> {
                 total_travel_s: 0,
                 total_visit_s: 0,
                 finish: hhmm::format(trip.day_start),
+                overtime: false,
                 stale: true,
             });
             continue;
@@ -608,6 +989,7 @@ pub async fn load(db: &PgPool, trip: &Trip) -> AppResult<Option<Itinerary>> {
                         s.travel_source.as_deref(),
                     ),
                     locked: s.locked,
+                    issue: s.issue.as_deref().and_then(ItineraryIssue::parse),
                 }
             })
             .collect();
@@ -630,6 +1012,7 @@ pub async fn load(db: &PgPool, trip: &Trip) -> AppResult<Option<Itinerary>> {
         let last_end = rows
             .last()
             .map_or(seconds(row.day_start), |s| s.end_s as u32);
+        let finish = last_end + back.as_ref().map_or(0, |b| b.duration_s);
         out_days.push(ItineraryDay {
             date: current.date,
             modes: parse_modes(&row.modes),
@@ -637,7 +1020,8 @@ pub async fn load(db: &PgPool, trip: &Trip) -> AppResult<Option<Itinerary>> {
             end_poi_id: row.end_poi_id,
             day_start: hhmm::format(row.day_start),
             day_end: hhmm::format(row.day_end),
-            finish: clock(last_end + back.as_ref().map_or(0, |b| b.duration_s)),
+            finish: clock(finish),
+            overtime: finish > seconds(row.day_end),
             stops,
             back,
             total_travel_s,
@@ -689,6 +1073,7 @@ mod tests {
         assert_eq!(clock(9 * 3600 + 29), "09:00");
         assert_eq!(clock(9 * 3600 + 30), "09:01");
         assert_eq!(clock(86_400), "24:00");
+        assert_eq!(clock(90_000), "25:00");
     }
 
     fn day(base: Option<u128>) -> TripDay {

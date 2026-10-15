@@ -334,3 +334,279 @@ async fn setting_changes_make_days_stale(db: PgPool) {
     );
     assert_eq!(it["has_estimates"], true);
 }
+
+// --- Ajustements manuels ------------------------------------------------------------------
+
+async fn generate(app: &TestApp, t: &Trip) -> Value {
+    let res = app.post(&uri(t), json!({}), Some(&t.editor)).await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    res.body
+}
+
+async fn move_poi(
+    app: &TestApp,
+    t: &Trip,
+    version: &Value,
+    poi: &str,
+    date: Value,
+    position: usize,
+) -> common::Response {
+    app.post(
+        &format!("{}/moves", uri(t)),
+        json!({ "version": version, "poi_id": poi, "date": date, "position": position }),
+        Some(&t.editor),
+    )
+    .await
+}
+
+fn unscheduled_reason(it: &Value, poi: &str) -> Option<String> {
+    it["unscheduled"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["poi_id"] == poi)
+        .map(|u| u["reason"].as_str().unwrap().to_owned())
+}
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn stops_move_within_and_between_days(db: PgPool) {
+    let app = TestApp::new(db);
+    let t = setup(&app).await;
+    let it = generate(&app, &t).await;
+    let day1 = stop_ids(&it["days"][0]);
+
+    // Réordonner : la deuxième étape passe en tête ; le jour 2 ne bouge pas.
+    let res = move_poi(&app, &t, &it["version"], &day1[1], json!("2026-12-01"), 0).await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    let moved = res.body;
+    assert_eq!(moved["version"], 2);
+    assert_eq!(
+        stop_ids(&moved["days"][0]),
+        vec![day1[1].clone(), day1[0].clone()]
+    );
+    assert_eq!(moved["days"][1], it["days"][1]);
+    assert_eq!(moved["days"][0]["stale"], false);
+    // L'heure d'arrivée de la nouvelle première étape est recalculée.
+    assert!(moved["days"][0]["stops"][0]["arrival"].as_str().unwrap() < "09:30");
+
+    // Changer de jour : le café part au jour 2, en deuxième position.
+    let res = move_poi(&app, &t, &moved["version"], &t.cafe, json!("2026-12-02"), 1).await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    let it2 = res.body;
+    assert!(!stop_ids(&it2["days"][0]).contains(&t.cafe));
+    let day2 = stop_ids(&it2["days"][1]);
+    assert_eq!(day2.len(), 3);
+    assert_eq!(day2[1], t.cafe);
+    assert!(
+        it2["days"][1]["stops"][1]["travel"]["duration_s"]
+            .as_u64()
+            .unwrap()
+            > 3600
+    );
+
+    // Le musée aussi, en dernier : la journée déborde, c'est signalé sans rien retirer.
+    let res = move_poi(
+        &app,
+        &t,
+        &it2["version"],
+        &t.museum,
+        json!("2026-12-02"),
+        99,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    let it3 = app.get(&uri(&t), Some(&t.viewer)).await.body;
+    let last = it3["days"][1]["stops"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(last["poi_id"], t.museum.as_str());
+    assert_eq!(it3["days"][1]["overtime"], true);
+    assert!(it3["days"][1]["stops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["issue"] == "after_day_end"));
+}
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn adjustments_are_validated(db: PgPool) {
+    let app = TestApp::new(db);
+    let t = setup(&app).await;
+    let moves = format!("{}/moves", uri(&t));
+    // Pas encore d'itinéraire.
+    let res = move_poi(&app, &t, &json!(1), &t.cafe, json!("2026-12-01"), 0).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+
+    let it = generate(&app, &t).await;
+    let v = &it["version"];
+    // Lecteur : interdit ; version obsolète : conflit.
+    let res = app
+        .post(
+            &moves,
+            json!({ "version": v, "poi_id": t.cafe, "date": "2026-12-02" }),
+            Some(&t.viewer),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        move_poi(&app, &t, &json!(0), &t.cafe, json!("2026-12-02"), 0)
+            .await
+            .status,
+        StatusCode::CONFLICT
+    );
+    // Hébergement, date hors voyage, lieu inconnu.
+    assert_eq!(
+        move_poi(&app, &t, v, &t.hotel_sj, json!("2026-12-02"), 0)
+            .await
+            .status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        move_poi(&app, &t, v, &t.cafe, json!("2026-12-09"), 0)
+            .await
+            .status,
+        StatusCode::BAD_REQUEST
+    );
+    let unknown = "00000000-0000-0000-0000-000000000000";
+    assert_eq!(
+        move_poi(&app, &t, v, unknown, json!("2026-12-02"), 0)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    // Rien n'a changé : la version est toujours la même.
+    assert_eq!(app.get(&uri(&t), Some(&t.viewer)).await.body["version"], *v);
+}
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn places_can_be_removed_and_added_by_hand(db: PgPool) {
+    let app = TestApp::new(db);
+    let t = setup(&app).await;
+    let it = generate(&app, &t).await;
+
+    // Le lieu toujours fermé, ajouté à la main : gardé mais signalé.
+    let res = move_poi(&app, &t, &it["version"], &t.closed, json!("2026-12-01"), 0).await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    let it = res.body;
+    assert_eq!(it["days"][0]["stops"][0]["poi_id"], t.closed.as_str());
+    assert_eq!(it["days"][0]["stops"][0]["issue"], "outside_opening_hours");
+    assert_eq!(unscheduled_reason(&it, &t.closed), None);
+
+    // Retirer le café : il passe hors itinéraire, et y reste quand on régénère.
+    let res = move_poi(&app, &t, &it["version"], &t.cafe, Value::Null, 0).await;
+    let it = res.body;
+    assert!(!stop_ids(&it["days"][0]).contains(&t.cafe));
+    assert_eq!(unscheduled_reason(&it, &t.cafe).as_deref(), Some("removed"));
+    let it = generate(&app, &t).await;
+    assert_eq!(unscheduled_reason(&it, &t.cafe).as_deref(), Some("removed"));
+    assert_eq!(
+        unscheduled_reason(&it, &t.closed).as_deref(),
+        Some("closed_all_days")
+    );
+
+    // Le remettre dans une journée le réintègre.
+    let res = move_poi(&app, &t, &it["version"], &t.cafe, json!("2026-12-01"), 5).await;
+    assert!(stop_ids(&res.body["days"][0]).contains(&t.cafe));
+    assert_eq!(unscheduled_reason(&res.body, &t.cafe), None);
+}
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn locked_stops_survive_regeneration(db: PgPool) {
+    let app = TestApp::new(db);
+    let t = setup(&app).await;
+    let it = generate(&app, &t).await;
+    assert!(stop_ids(&it["days"][0]).contains(&t.museum));
+
+    // Le musée, déplacé au jour 2 et verrouillé, y reste après régénération.
+    let it = move_poi(&app, &t, &it["version"], &t.museum, json!("2026-12-02"), 0)
+        .await
+        .body;
+    let stop_uri = format!("{}/stops/{}", uri(&t), t.museum);
+    let res = app
+        .patch(
+            &stop_uri,
+            json!({ "version": it["version"], "locked": true }),
+            Some(&t.editor),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    assert_eq!(res.body["days"][1]["stops"][0]["locked"], true);
+    // Le verrou seul ne recalcule rien.
+    assert_eq!(res.body["days"][1]["stops"], {
+        let mut stops = it["days"][1]["stops"].clone();
+        stops[0]["locked"] = json!(true);
+        stops
+    });
+
+    let it = generate(&app, &t).await;
+    assert!(stop_ids(&it["days"][1]).contains(&t.museum));
+    assert!(!stop_ids(&it["days"][0]).contains(&t.museum));
+    let museum = it["days"][1]["stops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["poi_id"] == t.museum.as_str())
+        .unwrap()
+        .clone();
+    assert_eq!(museum["locked"], true);
+
+    // Déverrouillé, il retourne là où l'algorithme le place.
+    let res = app
+        .patch(
+            &stop_uri,
+            json!({ "version": it["version"], "locked": false }),
+            Some(&t.editor),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let it = generate(&app, &t).await;
+    assert!(stop_ids(&it["days"][0]).contains(&t.museum));
+
+    // Verrouiller un lieu hors itinéraire : introuvable.
+    let res = app
+        .patch(
+            &format!("{}/stops/{}", uri(&t), t.closed),
+            json!({ "version": it["version"], "locked": true }),
+            Some(&t.editor),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn recompute_refreshes_only_one_day(db: PgPool) {
+    let app = TestApp::new(db);
+    let t = setup(&app).await;
+    let it = generate(&app, &t).await;
+    let before = it["days"][0]["finish"].clone();
+
+    // Visite du musée rallongée : jour 1 périmé ; le recalcul garde l'ordre.
+    let res = app
+        .patch(
+            &format!("/api/v1/trips/{}/pois/{}", t.id, t.museum),
+            json!({ "version": 1, "duration_min": 240 }),
+            Some(&t.editor),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let stale = app.get(&uri(&t), Some(&t.viewer)).await.body;
+    assert_eq!(stale["days"][0]["stale"], true);
+
+    let res = app
+        .post(
+            &format!("{}/days/2026-12-01/recompute", uri(&t)),
+            json!({ "version": stale["version"] }),
+            Some(&t.editor),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    let it2 = res.body;
+    assert_eq!(it2["days"][0]["stale"], false);
+    assert_eq!(it2["stale"], false);
+    assert_eq!(stop_ids(&it2["days"][0]), stop_ids(&it["days"][0]));
+    assert!(it2["days"][0]["finish"].as_str().unwrap() > before.as_str().unwrap());
+    assert_eq!(it2["days"][1], it["days"][1]);
+}

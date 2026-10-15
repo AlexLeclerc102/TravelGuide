@@ -49,6 +49,8 @@ pub struct Candidate {
     pub score: f64,
     /// Pour chaque jour : le lieu est-il fermé toute la journée ?
     pub closed: Vec<bool>,
+    /// Jour imposé (étape verrouillée) : placé là quoi qu'il arrive.
+    pub pinned: Option<usize>,
 }
 
 /// Jour du voyage, vu par la répartition.
@@ -188,8 +190,19 @@ fn fill(cands: &[Candidate], days: &[DaySlot], centers: &[LatLon], order: &[usiz
         days: vec![vec![]; days.len()],
         unassigned: vec![],
     };
+    // Les lieux verrouillés d'abord, sur leur jour, même au-delà du budget.
+    for &i in order {
+        if let Some(d) = cands[i].pinned.filter(|&d| d < days.len()) {
+            remaining[d] =
+                remaining[d].saturating_sub(estimated_cost(&cands[i], centers[d], days[d].mode));
+            out.days[d].push(i);
+        }
+    }
     for &i in order {
         let c = &cands[i];
+        if c.pinned.is_some_and(|d| d < days.len()) {
+            continue;
+        }
         if (0..days.len()).all(|d| c.closed.get(d).copied().unwrap_or(false)) {
             out.unassigned.push((i, Unscheduled::ClosedAllDays));
             continue;
@@ -239,9 +252,10 @@ fn reorder_free_days(cands: &[Candidate], days: &[DaySlot], result: &mut Assignm
     let groups: Vec<Vec<usize>> = free.iter().map(|&d| result.days[d].clone()).collect();
     let center = |g: &Vec<usize>| centroid(g.iter().map(|&i| cands[i].location));
     let fits = |g: &Vec<usize>, d: usize| {
-        g.iter()
-            .all(|&i| !cands[i].closed.get(d).copied().unwrap_or(false))
-            && g.iter().map(|&i| cands[i].duration_s).sum::<u32>() <= days[d].budget_s
+        g.iter().all(|&i| {
+            !cands[i].closed.get(d).copied().unwrap_or(false)
+                && cands[i].pinned.is_none_or(|p| p == d)
+        }) && g.iter().map(|&i| cands[i].duration_s).sum::<u32>() <= days[d].budget_s
     };
 
     let mut taken = vec![false; groups.len()];
@@ -320,6 +334,9 @@ pub struct DayProblem<'a> {
     pub start: Option<usize>,
     pub end: Option<usize>,
     pub travel: &'a TravelMatrix,
+    /// Visites verrouillées, dans l'ordre à conserver : toujours gardées, quitte à ne pas
+    /// respecter une contrainte (signalée).
+    pub fixed: &'a [usize],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -332,6 +349,18 @@ pub struct Stop {
     /// Début de la visite (après une éventuelle attente de l'ouverture).
     pub start_s: u32,
     pub end_s: u32,
+    /// Contrainte non respectée (étape placée ou verrouillée à la main).
+    pub issue: Option<StopIssue>,
+}
+
+/// Contrainte qu'une étape imposée à la main ne respecte pas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopIssue {
+    /// Fermé à l'heure prévue, ou pas assez longtemps pour la visite.
+    OutsideOpeningHours,
+    /// La visite se termine après la fin de la journée.
+    AfterDayEnd,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -342,6 +371,8 @@ pub struct DayPlan {
     /// Heure de fin de la journée (arrivée à l'hébergement, ou fin de la dernière visite).
     pub finish_s: u32,
     pub total_travel_s: u32,
+    /// La journée se termine après l'heure de fin prévue.
+    pub overtime: bool,
     pub unscheduled: Vec<(usize, Unscheduled)>,
 }
 
@@ -356,24 +387,35 @@ fn earliest_start(arrival: u32, v: &Visit, day_end: u32) -> Option<u32> {
     }
 }
 
-/// Simule une journée dans l'ordre donné ; `None` si une contrainte n'est pas respectée.
-fn simulate(p: &DayProblem<'_>, order: &[usize]) -> Option<DayPlan> {
+/// Simule une journée dans l'ordre donné. Strict : `None` si une contrainte n'est pas
+/// respectée. Souple : toujours un résultat, les contraintes non respectées sont signalées
+/// (visite à l'arrivée si le lieu est fermé, journée qui déborde).
+fn simulate(p: &DayProblem<'_>, order: &[usize], lenient: bool) -> Option<DayPlan> {
     let mut t = p.day_start_s;
     let mut prev = p.start;
     let mut stops = Vec::with_capacity(order.len());
     let mut total_travel = 0;
     for &v in order {
+        let visit = &p.visits[v];
         let travel = prev.map(|from| p.travel.get(from, v));
         let arrival = t + travel.map_or(0, |(_, l)| l.duration_s);
         total_travel += travel.map_or(0, |(_, l)| l.duration_s);
-        let start = earliest_start(arrival, &p.visits[v], p.day_end_s)?;
-        let end = start + p.visits[v].duration_s;
+        let (start, issue) = match earliest_start(arrival, visit, p.day_end_s) {
+            Some(start) => (start, None),
+            None if !lenient => return None,
+            None => match earliest_start(arrival, visit, u32::MAX) {
+                Some(start) => (start, Some(StopIssue::AfterDayEnd)),
+                None => (arrival, Some(StopIssue::OutsideOpeningHours)),
+            },
+        };
+        let end = start + visit.duration_s;
         stops.push(Stop {
             visit: v,
             travel,
             arrival_s: arrival,
             start_s: start,
             end_s: end,
+            issue,
         });
         t = end;
         prev = Some(v);
@@ -385,21 +427,31 @@ fn simulate(p: &DayProblem<'_>, order: &[usize]) -> Option<DayPlan> {
     };
     let finish = t + back.map_or(0, |(_, l)| l.duration_s);
     total_travel += back.map_or(0, |(_, l)| l.duration_s);
-    (finish <= p.day_end_s).then_some(DayPlan {
+    let overtime = finish > p.day_end_s;
+    (lenient || !overtime).then_some(DayPlan {
         stops,
         back,
         finish_s: finish,
         total_travel_s: total_travel,
+        overtime,
         unscheduled: vec![],
     })
+}
+
+/// Minute une journée dans l'ordre imposé (ajustement manuel), sans rien retirer :
+/// les contraintes non respectées sont signalées sur les étapes et la journée.
+pub fn time_day(p: &DayProblem<'_>, order: &[usize]) -> DayPlan {
+    simulate(p, order, true).expect("la simulation souple aboutit toujours")
 }
 
 /// Nombre maximal de passes d'amélioration 2-opt.
 const MAX_2OPT_PASSES: usize = 50;
 
-/// Ordonne et minute une journée (voir le module).
+/// Ordonne et minute une journée (voir le module). Les visites verrouillées
+/// (`p.fixed`) sont gardées dans leur ordre ; les autres s'insèrent autour.
 pub fn schedule_day(p: &DayProblem<'_>) -> DayPlan {
-    let mut order_by_priority: Vec<usize> = (0..p.visits.len()).collect();
+    let is_fixed = |v: usize| p.fixed.contains(&v);
+    let mut order_by_priority: Vec<usize> = (0..p.visits.len()).filter(|&v| !is_fixed(v)).collect();
     order_by_priority.sort_by(|&a, &b| {
         p.visits[b]
             .score
@@ -407,14 +459,14 @@ pub fn schedule_day(p: &DayProblem<'_>) -> DayPlan {
             .then(a.cmp(&b))
     });
 
-    let mut order: Vec<usize> = vec![];
+    let mut order: Vec<usize> = p.fixed.to_vec();
     let mut unscheduled = vec![];
     for v in order_by_priority {
         let best = (0..=order.len())
             .filter_map(|pos| {
                 let mut candidate = order.clone();
                 candidate.insert(pos, v);
-                simulate(p, &candidate)
+                simulate(p, &candidate, false)
                     .map(|plan| (plan.finish_s, plan.total_travel_s, pos, candidate))
             })
             .min_by_key(|&(finish, travel, pos, _)| (finish, travel, pos));
@@ -422,7 +474,7 @@ pub fn schedule_day(p: &DayProblem<'_>) -> DayPlan {
             Some((_, _, _, candidate)) => order = candidate,
             None => {
                 // Le lieu seul tient-il dans la journée ? Sinon, ce sont ses horaires.
-                let alone = simulate(p, &[v]).is_some();
+                let alone = simulate(p, &[v], false).is_some();
                 let reason = if !alone && p.visits[v].windows.is_some() {
                     Unscheduled::OpeningHours
                 } else {
@@ -433,14 +485,23 @@ pub fn schedule_day(p: &DayProblem<'_>) -> DayPlan {
         }
     }
 
-    let mut plan = simulate(p, &order).expect("ordre construit faisable");
+    // Étapes verrouillées impossibles à tenir : on les garde, signalées, sans optimiser.
+    let Some(mut plan) = simulate(p, &order, false) else {
+        let mut plan = time_day(p, &order);
+        plan.unscheduled = unscheduled;
+        return plan;
+    };
     for _ in 0..MAX_2OPT_PASSES {
         let mut improved = false;
         for i in 0..order.len() {
             for j in i + 1..order.len() {
+                // Inverser deux étapes verrouillées changerait leur ordre.
+                if order[i..=j].iter().filter(|&&v| is_fixed(v)).count() > 1 {
+                    continue;
+                }
                 let mut candidate = order.clone();
                 candidate[i..=j].reverse();
-                if let Some(next) = simulate(p, &candidate) {
+                if let Some(next) = simulate(p, &candidate, false) {
                     if next.total_travel_s < plan.total_travel_s {
                         order = candidate;
                         plan = next;
@@ -473,6 +534,7 @@ mod tests {
             duration_s: duration_min * 60,
             score,
             closed: vec![false; days],
+            pinned: None,
         }
     }
 
@@ -544,6 +606,21 @@ mod tests {
             ],
         );
         assert!(a.days.iter().all(|d| d.len() == 2), "{a:?}");
+    }
+
+    #[test]
+    fn pinned_places_stay_on_their_day() {
+        let mut cands = two_regions(2);
+        // Lieu de San José verrouillé le jour de La Fortuna, même s'il est loin.
+        cands[0].pinned = Some(0);
+        cands[2].pinned = Some(0);
+        let a = assign_days(&cands, &[slot(Some(FORTUNA)), slot(Some(SAN_JOSE))]);
+        assert!(a.days[0].contains(&0) && a.days[0].contains(&2), "{a:?}");
+        assert_eq!(day_of(&a, 4), 1);
+        // Même sans hébergement (jours réordonnés), un lieu verrouillé ne change pas de jour.
+        let a = assign_days(&cands, &[slot(None), slot(None)]);
+        assert_eq!(day_of(&a, 0), 0);
+        assert_eq!(day_of(&a, 2), 0);
     }
 
     #[test]
@@ -652,6 +729,7 @@ mod tests {
             start: Some(4),
             end: Some(4),
             travel: &m,
+            fixed: &[],
         };
         let plan = schedule_day(&p);
         // Aller simple puis retour : 4 × 10 min aller + 4 × 10 min retour.
@@ -677,6 +755,7 @@ mod tests {
             start: None,
             end: None,
             travel: &m,
+            fixed: &[],
         };
         let plan = schedule_day(&p);
         // La visite sans horaires occupe 9 h–10 h, puis le musée ouvre à 10 h : aucune attente.
@@ -707,6 +786,7 @@ mod tests {
             start: None,
             end: None,
             travel: &m,
+            fixed: &[],
         };
         let plan = schedule_day(&p);
         assert_eq!(plan.unscheduled, vec![(0, Unscheduled::NoTime)]);
@@ -726,6 +806,7 @@ mod tests {
             start: Some(1),
             end: Some(1),
             travel: &m,
+            fixed: &[],
         };
         let plan = schedule_day(&p);
         assert!(plan.stops.is_empty());
@@ -745,10 +826,86 @@ mod tests {
             start: Some(3),
             end: Some(4),
             travel: &m,
+            fixed: &[],
         };
         let plan = schedule_day(&p);
         assert_eq!(order(&plan), vec![1, 0, 2]);
         assert_eq!(plan.total_travel_s, 60 * 60);
+    }
+
+    #[test]
+    fn locked_visits_keep_their_relative_order() {
+        // Sans contrainte, l'ordre optimal serait 1, 2, 0, 3 (voir plus haut) ; 3 puis 1
+        // sont verrouillés dans cet ordre : ils le restent, les autres s'insèrent autour.
+        let visits = vec![visit(30, 3.0); 4];
+        let m = line_matrix(&[3, 1, 2, 4, 0]);
+        let p = DayProblem {
+            day_start_s: 9 * H,
+            day_end_s: 19 * H,
+            visits: &visits,
+            start: Some(4),
+            end: Some(4),
+            travel: &m,
+            fixed: &[3, 1],
+        };
+        let plan = schedule_day(&p);
+        let o = order(&plan);
+        assert_eq!(o.len(), 4);
+        let pos = |v: usize| o.iter().position(|&x| x == v).unwrap();
+        assert!(pos(3) < pos(1), "{o:?}");
+        assert!(plan.stops.iter().all(|s| s.issue.is_none()));
+    }
+
+    #[test]
+    fn impossible_locked_visits_are_kept_and_flagged() {
+        let mut closed_morning = visit(60, 3.0);
+        closed_morning.windows = Some(vec![(14 * H, 15 * H)]);
+        let visits = vec![visit(480, 3.0), closed_morning, visit(60, 5.0)];
+        let m = line_matrix(&[0, 0, 0]);
+        let p = DayProblem {
+            day_start_s: 9 * H,
+            day_end_s: 17 * H,
+            visits: &visits,
+            start: None,
+            end: None,
+            travel: &m,
+            fixed: &[0, 1],
+        };
+        let plan = schedule_day(&p);
+        // 8 h de visite puis un lieu ouvert de 14 h à 15 h : impossible, mais conservé.
+        assert_eq!(order(&plan), vec![0, 1]);
+        assert_eq!(plan.stops[1].issue, Some(StopIssue::OutsideOpeningHours));
+        assert!(plan.overtime);
+        assert_eq!(plan.unscheduled, vec![(2, Unscheduled::NoTime)]);
+    }
+
+    #[test]
+    fn manual_order_is_timed_with_flags() {
+        let mut museum = visit(60, 3.0);
+        museum.windows = Some(vec![(10 * H, 17 * H)]);
+        let visits = vec![visit(300, 3.0), museum, visit(300, 3.0)];
+        let m = line_matrix(&[0, 1, 2, 0]);
+        let p = DayProblem {
+            day_start_s: 9 * H,
+            day_end_s: 19 * H,
+            visits: &visits,
+            start: Some(3),
+            end: Some(3),
+            travel: &m,
+            fixed: &[],
+        };
+        // Musée d'abord : attente de l'ouverture à 10 h.
+        let plan = time_day(&p, &[1, 0]);
+        assert_eq!(plan.stops[0].arrival_s, 9 * H + 600);
+        assert_eq!(plan.stops[0].start_s, 10 * H);
+        assert!(plan.stops.iter().all(|s| s.issue.is_none()) && !plan.overtime);
+        // 9 h–14 h, puis 14 h 20–19 h 20 (après la fin), puis le musée déjà fermé.
+        let plan = time_day(&p, &[0, 2, 1]);
+        assert_eq!(order(&plan), vec![0, 2, 1]);
+        assert_eq!(plan.stops[1].issue, Some(StopIssue::AfterDayEnd));
+        assert_eq!(plan.stops[2].issue, Some(StopIssue::OutsideOpeningHours));
+        assert!(plan.overtime);
+        assert!(plan.finish_s > 19 * H);
     }
 
     #[test]
@@ -761,6 +918,7 @@ mod tests {
             start: Some(0),
             end: Some(0),
             travel: &m,
+            fixed: &[],
         };
         let plan = schedule_day(&p);
         assert!(plan.stops.is_empty() && plan.back.is_none());
