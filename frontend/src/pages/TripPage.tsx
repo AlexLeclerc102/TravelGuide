@@ -24,9 +24,10 @@ export function TripPage() {
   const { tripId = '' } = useParams()
   const { data: trip, error, isPending } = useTrip(tripId)
   const qc = useQueryClient()
-  const [removed, setRemoved] = useState(false)
+  // Voyage dont on vient d'être retiré (la page reste montée d'un voyage à l'autre).
+  const [removedFrom, setRemovedFrom] = useState<string | null>(null)
 
-  if (removed) {
+  if (removedFrom === tripId) {
     return (
       <div className="page">
         <Link to="/">{t.trip.back}</Link>
@@ -47,9 +48,10 @@ export function TripPage() {
   }
   return (
     <TripView
+      key={trip.id}
       trip={trip}
       onRemoved={() => {
-        setRemoved(true)
+        setRemovedFrom(tripId)
         qc.removeQueries({ queryKey: tripKeys.one(tripId) })
         qc.invalidateQueries({ queryKey: tripKeys.all, exact: true })
       }}

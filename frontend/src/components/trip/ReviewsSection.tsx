@@ -6,7 +6,10 @@ import { t } from '../../i18n/fr'
 import { formatRating } from '../../lib/format'
 import { StarInput, Stars } from './Stars'
 
-/** Moyenne du groupe, désaccord éventuel, mon avis et celui de chaque membre. */
+/**
+ * Moyenne du groupe, désaccord éventuel, mon avis et celui de chaque membre.
+ * À monter avec `key={poi.id}` : l'enregistrement en cours et sa confirmation sont propres au lieu.
+ */
 export function ReviewsSection({ tripId, poi }: { tripId: string; poi: Poi }) {
   const { data: me } = useMe()
   const { data: reviews = [] } = useReviews(tripId, poi.id)
@@ -15,11 +18,9 @@ export function ReviewsSection({ tripId, poi }: { tripId: string; poi: Poi }) {
   // Ici plutôt que dans le formulaire : il est recréé après chaque enregistrement (voir sa clé),
   // ce qui effacerait la confirmation.
   const save = useSaveMyReview(tripId, poi.id)
-  const [notice, setNotice] = useState<{ poiId: string; text: string } | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const submit = (review: MyReview | null) =>
-    save.mutate(review, {
-      onSuccess: () => setNotice({ poiId: poi.id, text: review ? t.reviews.saved : t.reviews.removed }),
-    })
+    save.mutate(review, { onSuccess: () => setNotice(review ? t.reviews.saved : t.reviews.removed) })
 
   return (
     <section className="reviews" aria-label={t.reviews.title}>
@@ -45,9 +46,9 @@ export function ReviewsSection({ tripId, poi }: { tripId: string; poi: Poi }) {
         onSubmit={submit}
         onEdit={() => setNotice(null)}
       />
-      {notice?.poiId === poi.id && (
+      {notice && (
         <p className="success small" role="status">
-          {notice.text}
+          {notice}
         </p>
       )}
 

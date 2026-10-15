@@ -162,6 +162,8 @@ impl RoutingService {
                     .await
                 {
                     Err(RoutingError::NoPath) if chunk.len() > 1 => chunk.chunks(1).collect(),
+                    // Une seule ligne sans chemin : le moteur fonctionne, on estime cette ligne.
+                    Err(RoutingError::NoPath) => vec![],
                     Err(e) => {
                         down = self.note_failure(e);
                         vec![]
@@ -311,6 +313,8 @@ impl RoutingService {
 pub struct StaticRouter {
     pub calls: AtomicUsize,
     pub down: AtomicBool,
+    /// Comme Valhalla : une source sans route fait échouer toute la matrice (`NoPath`).
+    pub source_no_path: bool,
     pub max_pairs: usize,
     pub max_points: usize,
 }
@@ -320,6 +324,7 @@ impl Default for StaticRouter {
         Self {
             calls: AtomicUsize::new(0),
             down: AtomicBool::new(false),
+            source_no_path: false,
             max_pairs: 2_500,
             max_points: 20,
         }
@@ -362,6 +367,9 @@ impl RoutingProvider for std::sync::Arc<StaticRouter> {
     ) -> Result<Vec<Vec<Option<Leg>>>, RoutingError> {
         self.enter()?;
         assert!(mode.is_routed() && sources.len() * targets.len() <= self.max_pairs);
+        if self.source_no_path && sources.iter().any(|s| s.lat < 0.0) {
+            return Err(RoutingError::NoPath);
+        }
         Ok(sources
             .iter()
             .map(|&a| {
@@ -448,6 +456,22 @@ mod tests {
         assert_eq!(m[0][1].source, LegSource::StraightLine);
         assert_eq!(m[1][2].source, LegSource::StraightLine);
         assert!(m[0][1].duration_s > 0);
+    }
+
+    #[tokio::test]
+    async fn unreachable_single_row_chunk_keeps_routing() {
+        // Une ligne par requête : la ligne sans chemin ne coupe pas le moteur pour la suite.
+        let router = Arc::new(StaticRouter {
+            max_pairs: 3,
+            source_no_path: true,
+            ..Default::default()
+        });
+        let svc = service(&router);
+        let m = svc.matrix(Mode::Car, &[NOWHERE, SAN_JOSE, FORTUNA]).await;
+        assert_eq!(m[0][1].source, LegSource::StraightLine);
+        assert_eq!(m[1][2].source, LegSource::Router);
+        assert_eq!(m[2][1].source, LegSource::Router);
+        assert_eq!(router.calls.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]

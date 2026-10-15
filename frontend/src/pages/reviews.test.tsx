@@ -132,6 +132,30 @@ describe('avis', () => {
     expect(section.querySelectorAll('.review-list li.extreme')).toHaveLength(2)
   })
 
+  it('l’échec d’un avis reste sur son lieu', async () => {
+    mockApi(
+      routes('editor', [poi('p1', 'Volcán Arenal'), poi('p2', 'Playa Conchal')], {
+        'GET /trips/trip-1/pois/p1/reviews': () => ({ status: 200, body: [] }),
+        'GET /trips/trip-1/pois/p2/reviews': () => ({ status: 200, body: [] }),
+        'PUT /trips/trip-1/pois/p1/reviews/me': () => ({
+          status: 400,
+          body: { code: 'bad_request', message: 'avis refusé' },
+        }),
+      }),
+    )
+    renderApp('/trips/trip-1')
+    fireEvent.click(await screen.findByRole('button', { name: /Volcán Arenal/ }))
+    const form = await screen.findByRole('form', { name: 'Mon avis' })
+    fireEvent.click(within(form).getByRole('radio', { name: 'Noter 4 sur 5' }))
+    fireEvent.click(within(form).getByRole('button', { name: 'Enregistrer mon avis' }))
+    expect(await within(form).findByRole('alert')).toHaveTextContent(/avis refusé/i)
+
+    fireEvent.click(screen.getByRole('button', { name: /Playa Conchal/ }))
+    await screen.findByRole('region', { name: 'Avis du groupe' })
+    const other = screen.getByRole('form', { name: 'Mon avis' })
+    expect(within(other).queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('trie la liste par note ou par désaccord', async () => {
     mockApi(routes('editor', [poi('p1', 'Sans avis'), poi('p2', 'Partagé', split), poi('p3', 'Adoré', loved)]))
     renderApp('/trips/trip-1')

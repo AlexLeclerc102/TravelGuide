@@ -38,19 +38,24 @@ struct SessionLookup {
     last_seen_at: OffsetDateTime,
 }
 
-/// Retrouve l'utilisateur d'un jeton de session valide, et prolonge la session.
-pub async fn authenticate(db: &PgPool, token: &str) -> sqlx::Result<Option<UserRow>> {
-    let hash = token::hash(token);
-    let found: Option<SessionLookup> = sqlx::query_as(&format!(
+async fn lookup(db: &PgPool, hash: &[u8]) -> sqlx::Result<Option<SessionLookup>> {
+    sqlx::query_as(&format!(
         "SELECT {cols}, s.last_seen_at
          FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = $1 AND s.expires_at > now()",
         cols = UserRow::COLUMNS_U
     ))
-    .bind(&hash)
+    .bind(hash)
     .fetch_optional(db)
-    .await?;
-    let Some(found) = found else { return Ok(None) };
+    .await
+}
+
+/// Retrouve l'utilisateur d'un jeton de session valide, et prolonge la session.
+pub async fn authenticate(db: &PgPool, token: &str) -> sqlx::Result<Option<UserRow>> {
+    let hash = token::hash(token);
+    let Some(found) = lookup(db, &hash).await? else {
+        return Ok(None);
+    };
     if OffsetDateTime::now_utc() - found.last_seen_at > TOUCH_INTERVAL {
         sqlx::query(
             "UPDATE sessions SET last_seen_at = now(),
@@ -63,6 +68,14 @@ pub async fn authenticate(db: &PgPool, token: &str) -> sqlx::Result<Option<UserR
         .await?;
     }
     Ok(Some(found.user))
+}
+
+/// Comme [`authenticate`], sans prolonger la session : vérifications périodiques qui ne
+/// sont pas une activité de l'utilisateur (ex. connexion temps réel restée ouverte).
+pub async fn peek(db: &PgPool, token: &str) -> sqlx::Result<Option<UserRow>> {
+    Ok(lookup(db, &token::hash(token))
+        .await?
+        .map(|found| found.user))
 }
 
 pub async fn delete(db: &PgPool, token: &str) -> sqlx::Result<()> {

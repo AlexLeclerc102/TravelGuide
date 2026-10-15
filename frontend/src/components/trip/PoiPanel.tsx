@@ -97,7 +97,7 @@ export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeCh
             </button>
           </div>
           {/* Noter est plus fréquent que modifier : les avis d'abord, la modification repliée. */}
-          <ReviewsSection tripId={trip.id} poi={selectedPoi} />
+          <ReviewsSection key={selectedPoi.id} tripId={trip.id} poi={selectedPoi} />
           {canEdit ? (
             <details className="edit-details">
               <summary>{t.pois.editDetails}</summary>

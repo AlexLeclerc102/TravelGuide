@@ -238,7 +238,7 @@ export function useSaveMyReview(tripId: string, poiId: string) {
       ),
     onSuccess: (poi) => {
       qc.setQueryData<Poi[]>(poiKeys.list(tripId), (list) => list?.map((p) => (p.id === poi.id ? poi : p)))
-      qc.invalidateQueries({ queryKey: poiKeys.reviews(tripId, poiId) })
+      qc.invalidateQueries({ queryKey: poiKeys.reviews(tripId, poi.id) })
     },
   })
 }

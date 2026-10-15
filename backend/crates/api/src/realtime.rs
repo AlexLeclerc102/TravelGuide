@@ -292,9 +292,10 @@ async fn send_json(socket: &mut WebSocket, message: &ClientMessage) -> Result<()
 }
 
 /// Session toujours valide (pas de déconnexion ni de suppression du compte) et toujours
-/// membre du voyage ? Une erreur de base de données ne ferme pas la connexion.
+/// membre du voyage ? Une erreur de base de données ne ferme pas la connexion. La session
+/// n'est pas prolongée : un onglet resté ouvert n'est pas une activité.
 async fn still_allowed(state: &AppState, trip_id: Uuid, user_id: Uuid, token: &str) -> bool {
-    let session = session::authenticate(&state.db, token).await;
+    let session = session::peek(&state.db, token).await;
     let role = trips::role_of(&state.db, trip_id, user_id).await;
     match (session, role) {
         (Ok(Some(u)), Ok(Some(_))) => u.id == user_id,

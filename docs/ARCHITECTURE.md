@@ -170,7 +170,7 @@
 - **Stockage** : `itineraries` (version, auteur, date), `itinerary_days` (modes, hébergements,
   plage horaire, nombre d'étapes et instant du calcul, trajet de retour), `itinerary_stops`
   (ordre, horaires en secondes, trajet d'arrivée, `locked` pour l'incrément 7),
-  `itinerary_unscheduled`. Régénérer remplace tout (verrou sur le voyage).
+  `itinerary_unscheduled`. Régénérer remplace tout (verrou consultatif sur le voyage).
 - **Itinéraire périmé** (calculé à la lecture, rien n'est modifié en base) : un jour est
   `stale` si ses modes, ses hébergements ou la plage horaire ont changé, si une étape a disparu
   (lieu supprimé) ou si un lieu de la journée a été modifié depuis le calcul ; jours ajoutés
@@ -201,12 +201,14 @@
 - **Verrou** : une étape verrouillée garde son jour et l'ordre relatif des étapes verrouillées
   quand on régénère (`Candidate::pinned` à la répartition, `DayProblem::fixed` pour la journée :
   les autres lieux s'insèrent autour, le 2-opt n'inverse jamais deux étapes verrouillées). Si les
-  étapes verrouillées ne tiennent pas, elles sont gardées et signalées.
+  étapes verrouillées ne tiennent pas, elles sont gardées et signalées ; les autres lieux
+  s'insèrent encore s'ils n'ajoutent aucun problème (ni nouvelle étape signalée, ni débordement).
 - **Retrait manuel** : raison `removed`, conservée quand on régénère (le lieu reste hors
   itinéraire jusqu'à ce qu'on le replace à la main).
-- **Concurrence** : chaque écriture (génération ou ajustement) verrouille la ligne du voyage dans
-  une transaction ; la version de l'itinéraire détecte les modifications concurrentes. Les
-  trajets sont calculés dans la transaction (moteur local et cache : court).
+- **Concurrence** : générations et ajustements d'un même voyage s'enchaînent grâce à un verrou
+  consultatif de transaction (`pg_advisory_xact_lock`) ; la version de l'itinéraire détecte les
+  modifications concurrentes. Les trajets sont calculés dans la transaction (modes en parallèle,
+  cache) sans bloquer les autres écritures du voyage, qui rendent au besoin l'itinéraire périmé.
 - **Interface** : glisser-déposer `@dnd-kit` (souris, tactile et clavier : Espace, flèches,
   Espace ; annonces lecteur d'écran en français) dans une journée ou vers une autre (toute la
   carte d'une journée accepte un dépôt, y compris vide) ; boutons ↑/↓, verrou, « Déplacer… »
@@ -231,8 +233,8 @@
   voyage, membres, invitations, itinéraire, changement de nom ou suppression de compte).
   L'en-tête `X-Client-Id` (identifiant aléatoire de l'onglet) est renvoyé dans `changed` :
   l'onglet auteur ignore sa propre notification, ses autres onglets se mettent à jour.
-- **Revérification** toutes les 30 s (avec un ping) : session toujours valide et toujours
-  membre, sinon `removed`. Retrait d'un membre et suppression d'un voyage : immédiat.
+- **Revérification** toutes les 30 s (avec un ping) : session toujours valide (sans la prolonger :
+  un onglet resté ouvert n'est pas une activité) et toujours membre, sinon `removed`. Retrait d'un membre et suppression d'un voyage : immédiat.
 - **Hub en mémoire** (`realtime::Hub`, un canal `broadcast` par voyage ouvert) : une seule
   instance de l'API. Pour en déployer plusieurs, relayer les notifications entre instances
   (PostgreSQL `LISTEN/NOTIFY`, par exemple).
@@ -240,7 +242,8 @@
   affiche l'état de la connexion, les autres membres en ligne et la dernière modification
   (« Bruno a modifié les avis (22:27) »). Reconnexion automatique (0,5 s, doublé jusqu'à 30 s)
   puis rechargement complet du voyage pour rattraper les notifications manquées. Accès perdu :
-  message dédié, plus de reconnexion. Les modifications concurrentes restent arbitrées par les
+  message dédié, plus de reconnexion. Une reconnexion refusée (le navigateur ne donne pas le statut
+  HTTP) déclenche une lecture du voyage : 403/404 → accès perdu, 401 → retour à la connexion. Les modifications concurrentes restent arbitrées par les
   versions (409) déjà en place.
 - **Tests** : hub (présence, isolation des voyages), intégration par un vrai WebSocket
   (`tokio-tungstenite`) : notifications et présence, refus hors membres / mauvaise origine /

@@ -610,3 +610,42 @@ async fn recompute_refreshes_only_one_day(db: PgPool) {
     assert!(it2["days"][0]["finish"].as_str().unwrap() > before.as_str().unwrap());
     assert_eq!(it2["days"][1], it["days"][1]);
 }
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn stops_leave_days_removed_from_the_trip(db: PgPool) {
+    let app = TestApp::new(db);
+    let t = setup(&app).await;
+    let it = generate(&app, &t).await;
+    let day2 = stop_ids(&it["days"][1]);
+    assert_eq!(day2.len(), 2, "{it:?}");
+
+    // Voyage raccourci au seul 1er décembre : les étapes du 2 restent en base.
+    let res = app
+        .patch(
+            &format!("/api/v1/trips/{}", t.id),
+            json!({ "version": 2, "end_date": "2026-12-01" }),
+            Some(&t.orga),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+
+    // Une étape du jour retiré passe au 1er, une autre est retirée de l'itinéraire.
+    let res = move_poi(&app, &t, &it["version"], &day2[0], json!("2026-12-01"), 0).await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    assert_eq!(stop_ids(&res.body["days"][0])[0], day2[0]);
+    let res = move_poi(&app, &t, &res.body["version"], &day2[1], Value::Null, 0).await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    let it = res.body;
+    let planned: Vec<String> = it["days"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(stop_ids)
+        .collect();
+    assert_eq!(planned.iter().filter(|id| **id == day2[0]).count(), 1);
+    assert!(!planned.contains(&day2[1]));
+    assert_eq!(
+        unscheduled_reason(&it, &day2[1]).as_deref(),
+        Some("removed")
+    );
+}

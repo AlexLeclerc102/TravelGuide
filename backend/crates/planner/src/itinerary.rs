@@ -459,6 +459,28 @@ pub fn schedule_day(p: &DayProblem<'_>) -> DayPlan {
             .then(a.cmp(&b))
     });
 
+    // Étapes verrouillées déjà impossibles à tenir (lieu fermé à l'heure prévue, journée
+    // qui déborde) : elles restent signalées, et les autres visites s'insèrent pourvu
+    // qu'elles n'ajoutent aucun problème. Sinon, toute la journée doit être tenable.
+    let baseline = match simulate(p, p.fixed, false) {
+        Some(_) => None,
+        None => simulate(p, p.fixed, true),
+    };
+    let fits = |order: &[usize]| -> Option<DayPlan> {
+        let Some(base) = &baseline else {
+            return simulate(p, order, false);
+        };
+        let plan = simulate(p, order, true)?;
+        let flagged_before =
+            |v: usize| base.stops.iter().any(|s| s.visit == v && s.issue.is_some());
+        let no_new_issue = plan
+            .stops
+            .iter()
+            .all(|s| s.issue.is_none() || flagged_before(s.visit));
+        let no_more_overtime = !plan.overtime || (base.overtime && plan.finish_s <= base.finish_s);
+        (no_new_issue && no_more_overtime).then_some(plan)
+    };
+
     let mut order: Vec<usize> = p.fixed.to_vec();
     let mut unscheduled = vec![];
     for v in order_by_priority {
@@ -466,8 +488,7 @@ pub fn schedule_day(p: &DayProblem<'_>) -> DayPlan {
             .filter_map(|pos| {
                 let mut candidate = order.clone();
                 candidate.insert(pos, v);
-                simulate(p, &candidate, false)
-                    .map(|plan| (plan.finish_s, plan.total_travel_s, pos, candidate))
+                fits(&candidate).map(|plan| (plan.finish_s, plan.total_travel_s, pos, candidate))
             })
             .min_by_key(|&(finish, travel, pos, _)| (finish, travel, pos));
         match best {
@@ -485,8 +506,8 @@ pub fn schedule_day(p: &DayProblem<'_>) -> DayPlan {
         }
     }
 
-    // Étapes verrouillées impossibles à tenir : on les garde, signalées, sans optimiser.
-    let Some(mut plan) = simulate(p, &order, false) else {
+    // Par construction, l'ordre retenu convient ; repli souple par sécurité.
+    let Some(mut plan) = fits(&order) else {
         let mut plan = time_day(p, &order);
         plan.unscheduled = unscheduled;
         return plan;
@@ -501,7 +522,7 @@ pub fn schedule_day(p: &DayProblem<'_>) -> DayPlan {
                 }
                 let mut candidate = order.clone();
                 candidate[i..=j].reverse();
-                if let Some(next) = simulate(p, &candidate, false) {
+                if let Some(next) = fits(&candidate) {
                     if next.total_travel_s < plan.total_travel_s {
                         order = candidate;
                         plan = next;
@@ -877,6 +898,32 @@ mod tests {
         assert_eq!(plan.stops[1].issue, Some(StopIssue::OutsideOpeningHours));
         assert!(plan.overtime);
         assert_eq!(plan.unscheduled, vec![(2, Unscheduled::NoTime)]);
+    }
+
+    #[test]
+    fn closed_locked_visit_leaves_room_for_the_others() {
+        // Lieu verrouillé fermé ce jour-là : signalé, mais la journée reste libre pour le reste.
+        let mut closed = visit(60, 3.0);
+        closed.windows = Some(vec![]);
+        let visits = vec![closed, visit(60, 3.0), visit(60, 4.0)];
+        let m = line_matrix(&[0, 1, 2]);
+        let p = DayProblem {
+            day_start_s: 9 * H,
+            day_end_s: 17 * H,
+            visits: &visits,
+            start: None,
+            end: None,
+            travel: &m,
+            fixed: &[0],
+        };
+        let plan = schedule_day(&p);
+        assert_eq!(order(&plan).len(), 3, "{plan:?}");
+        assert!(plan.unscheduled.is_empty());
+        assert!(!plan.overtime);
+        for s in &plan.stops {
+            let expected = (s.visit == 0).then_some(StopIssue::OutsideOpeningHours);
+            assert_eq!(s.issue, expected, "{plan:?}");
+        }
     }
 
     #[test]

@@ -24,13 +24,17 @@ const trip = {
 const ana = { user_id: demoUser.id, name: 'Ana' }
 const bob = { user_id: '00000000-0000-0000-0000-000000000002', name: 'Bob' }
 
-function setup() {
+function setup(access = { trip: 200 }) {
   const calls = { trip: 0, pois: 0 }
   mockApi({
     'GET /me': () => ({ status: 200, body: demoUser }),
     'GET /health': () => ({ status: 200, body: { status: 'ok', database: 'ok', version: '0.1.0' } }),
     'GET /trips/trip-1': () => {
       calls.trip += 1
+      // Premier chargement toujours accepté ; ensuite, selon le scénario.
+      if (calls.trip > 1 && access.trip !== 200) {
+        return { status: access.trip, body: { code: 'forbidden', message: 'accès refusé' } }
+      }
       return { status: 200, body: trip }
     },
     'GET /trips/trip-1/pois': () => {
@@ -89,6 +93,27 @@ describe('collaboration en temps réel', () => {
     act(() => FakeWebSocket.last!.open())
     expect(screen.getByText('En direct')).toBeInTheDocument()
     await waitFor(() => expect(calls.trip).toBe(2))
+  })
+
+  it('vérifie l’accès quand la reconnexion est refusée, puis se reconnecte ou s’arrête', async () => {
+    const access = { trip: 200 }
+    const calls = setup(access)
+    const socket = await connected()
+    await waitFor(() => expect(calls.trip).toBe(1))
+
+    // Coupure, puis reconnexion refusée alors que l’accès est intact : nouvel essai.
+    act(() => socket.drop())
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2), { timeout: 2000 })
+    act(() => FakeWebSocket.last!.drop())
+    await waitFor(() => expect(calls.trip).toBe(2))
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(3), { timeout: 3000 })
+
+    // Membre retiré entre-temps : la poignée de main échoue, le voyage répond 403.
+    access.trip = 403
+    act(() => FakeWebSocket.last!.drop())
+    expect(await screen.findByRole('alert')).toHaveTextContent('Vous n’avez plus accès à ce voyage')
+    await new Promise((r) => setTimeout(r, 1200))
+    expect(FakeWebSocket.instances).toHaveLength(3)
   })
 
   it('prévient quand l’accès au voyage est perdu', async () => {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
-import { CLIENT_ID } from '../api/client'
+import { meKey } from '../api/auth'
+import { ApiError, apiFetch, CLIENT_ID } from '../api/client'
 import { t } from '../i18n/fr'
 import { poiKeys } from '../api/pois'
 import { tripKeys } from '../api/trips'
@@ -102,10 +103,39 @@ export function useTripRealtime(tripId: string, onRemoved: () => void) {
     let attempts = 0
     let stopped = false
 
+    const scheduleReconnect = () => {
+      const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempts)
+      attempts += 1
+      timer = setTimeout(connect, delay)
+    }
+
+    // Connexion refusée : le navigateur ne donne pas le statut HTTP de la poignée de main,
+    // on demande donc le voyage. Session expirée ou accès perdu : inutile de réessayer.
+    const checkAccess = async () => {
+      try {
+        await apiFetch(`/trips/${tripId}`)
+      } catch (e) {
+        if (stopped) return
+        if (e instanceof ApiError && e.status === 401) {
+          stopped = true
+          qc.invalidateQueries({ queryKey: meKey })
+          return
+        }
+        if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
+          stopped = true
+          removed.current()
+          return
+        }
+      }
+      if (!stopped) scheduleReconnect()
+    }
+
     const connect = () => {
+      let opened = false
       setStatus('connecting')
       socket = new WebSocket(socketUrl(tripId))
       socket.onopen = () => {
+        opened = true
         setStatus('online')
         // Après une coupure, des notifications ont pu être perdues.
         if (attempts > 0) qc.invalidateQueries({ queryKey: tripKeys.one(tripId) })
@@ -142,9 +172,8 @@ export function useTripRealtime(tripId: string, onRemoved: () => void) {
         if (stopped) return
         setStatus('offline')
         setOnline([])
-        const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempts)
-        attempts += 1
-        timer = setTimeout(connect, delay)
+        if (opened) scheduleReconnect()
+        else void checkAccess()
       }
     }
 

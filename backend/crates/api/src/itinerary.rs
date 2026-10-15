@@ -222,6 +222,8 @@ struct Context {
     trip: Trip,
     days: Vec<TripDay>,
     bases: Vec<(Option<Uuid>, Option<Uuid>)>,
+    /// Hébergements servant de départ ou d'arrivée à au moins un jour.
+    base_ids: HashSet<Uuid>,
     pois: HashMap<Uuid, Poi>,
     /// Instant de lecture : un lieu modifié après sera signalé comme changé.
     read_at: OffsetDateTime,
@@ -229,8 +231,11 @@ struct Context {
 
 impl Context {
     async fn load(conn: &mut PgConnection, trip_id: Uuid, user_id: Uuid) -> AppResult<Self> {
-        // Verrou sur le voyage : générations et ajustements concurrents s'enchaînent.
-        sqlx::query("SELECT 1 FROM trips WHERE id = $1 FOR UPDATE")
+        // Générations et ajustements concurrents d'un même voyage s'enchaînent. Verrou
+        // consultatif plutôt que `FOR UPDATE` : les appels au moteur de routage ont lieu dans
+        // la transaction et ne doivent pas bloquer les autres écritures du voyage (une
+        // modification concurrente rend simplement l'itinéraire périmé).
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('itinerary:' || $1::text, 0))")
             .bind(trip_id)
             .execute(&mut *conn)
             .await?;
@@ -249,8 +254,10 @@ impl Context {
         .into_iter()
         .map(|p| (p.id, p))
         .collect();
+        let bases = day_bases(&days);
         Ok(Self {
-            bases: day_bases(&days),
+            base_ids: bases.iter().flat_map(|&(s, e)| [s, e]).flatten().collect(),
+            bases,
             trip,
             days,
             pois,
@@ -258,19 +265,11 @@ impl Context {
         })
     }
 
-    fn base_ids(&self) -> HashSet<Uuid> {
-        self.bases
-            .iter()
-            .flat_map(|&(s, e)| [s, e])
-            .flatten()
-            .collect()
-    }
-
     /// Lieu que l'on peut visiter (ni hébergement, ni supprimé).
     fn visitable(&self, id: Uuid) -> Option<&Poi> {
         self.pois
             .get(&id)
-            .filter(|p| p.category != Category::Lodging && !self.base_ids().contains(&id))
+            .filter(|p| p.category != Category::Lodging && !self.base_ids.contains(&id))
     }
 
     fn day_index(&self, date: Date) -> Option<usize> {
@@ -369,10 +368,30 @@ async fn travel_matrix(routing: &RoutingService, modes: &[Mode], nodes: &[LatLon
     if nodes.len() < 2 {
         return TravelMatrix::new(nodes.len(), |_, _| (fallback_mode, zero));
     }
-    let mut per_mode = Vec::with_capacity(modes.len());
-    for &mode in modes {
-        per_mode.push((mode, routing.matrix(mode, nodes).await));
-    }
+    // Modes routés en parallèle ; les transports en commun ensuite, dérivés de la matrice
+    // voiture (alors en cache si la voiture fait partie des modes du jour).
+    let run = |mode: Mode| async move {
+        if modes.contains(&mode) {
+            Some(routing.matrix(mode, nodes).await)
+        } else {
+            None
+        }
+    };
+    let (walk, bike, car) = tokio::join!(run(Mode::Walk), run(Mode::Bike), run(Mode::Car));
+    let transit = run(Mode::Transit).await;
+    let mut grids = [
+        (Mode::Walk, walk),
+        (Mode::Bike, bike),
+        (Mode::Car, car),
+        (Mode::Transit, transit),
+    ];
+    let per_mode: Vec<(Mode, Vec<Vec<Leg>>)> = modes
+        .iter()
+        .filter_map(|&mode| {
+            let (_, grid) = grids.iter_mut().find(|(m, _)| *m == mode)?;
+            Some((mode, grid.take()?))
+        })
+        .collect();
     TravelMatrix::new(nodes.len(), |i, j| {
         if i == j {
             return (fallback_mode, zero);
@@ -732,7 +751,6 @@ pub async fn adjust(
                 .map(|i| (*date, i))
         })
     };
-    let not_in_trip = || AppError::BadRequest("cette date ne fait pas partie du voyage".into());
 
     let mut touched: Vec<Date> = vec![];
     match adjustment {
@@ -751,13 +769,23 @@ pub async fn adjust(
                 });
             }
             if date.is_some_and(|d| ctx.day_index(d).is_none()) {
-                return Err(not_in_trip());
+                return Err(days::not_in_trip());
             }
             let mut locked = false;
             if let Some((from, i)) = find(&stops, poi_id) {
                 let list = stops.get_mut(&from).expect("jour trouvé");
                 locked = list.remove(i).1;
-                touched.push(from);
+                if ctx.day_index(from).is_some() {
+                    touched.push(from);
+                } else {
+                    // Jour sorti des dates du voyage : il n'est plus recalculé (il reste
+                    // signalé), on y retire seulement l'étape.
+                    sqlx::query("DELETE FROM itinerary_stops WHERE trip_id = $1 AND poi_id = $2")
+                        .bind(trip_id)
+                        .bind(poi_id)
+                        .execute(&mut *tx)
+                        .await?;
+                }
             }
             match date {
                 Some(to) => {
@@ -787,13 +815,13 @@ pub async fn adjust(
             tracing::debug!(%trip_id, %poi_id, %date, locked, "étape (dé)verrouillée");
         }
         Adjustment::Recompute { date } => {
-            ctx.day_index(date).ok_or_else(not_in_trip)?;
+            ctx.day_index(date).ok_or_else(days::not_in_trip)?;
             touched.push(date);
         }
     }
 
     for date in touched {
-        // Un jour sorti des dates du voyage n'est plus recalculé (il reste signalé).
+        // Seuls des jours du voyage sont touchés (dates vérifiées ci-dessus).
         let Some(d) = ctx.day_index(date) else {
             continue;
         };

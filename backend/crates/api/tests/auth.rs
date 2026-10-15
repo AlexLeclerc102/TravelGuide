@@ -167,6 +167,38 @@ async fn expired_session_is_rejected(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "api::MIGRATOR")]
+async fn sessions_slide_on_activity_but_not_on_peek(db: PgPool) {
+    let app = TestApp::new(db.clone());
+    let token = app.register("ana@example.com", "Ana").await;
+    let expiry = || async {
+        sqlx::query_scalar::<_, time::OffsetDateTime>("SELECT expires_at FROM sessions")
+            .fetch_one(&db)
+            .await
+            .unwrap()
+    };
+    sqlx::query(
+        "UPDATE sessions SET last_seen_at = now() - interval '2 hours',
+             expires_at = now() + interval '1 day'",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let before = expiry().await;
+
+    // Vérification périodique (temps réel) : session valide, mais pas prolongée.
+    let user = api::auth::session::peek(&db, &token).await.unwrap();
+    assert!(user.is_some());
+    assert_eq!(expiry().await, before);
+
+    // Requête de l'utilisateur : la session est prolongée.
+    assert_eq!(
+        app.get("/api/v1/me", Some(&token)).await.status,
+        StatusCode::OK
+    );
+    assert!(expiry().await > before + time::Duration::days(20));
+}
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
 async fn writes_without_allowed_origin_are_rejected(db: PgPool) {
     let app = TestApp::new(db);
     for origin in [None, Some("https://evil.example")] {
