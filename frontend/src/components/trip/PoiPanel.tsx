@@ -17,6 +17,7 @@ import { formatDate, formatRating } from '../../lib/format'
 import { PoiDetails, PoiEditor } from './PoiEditor'
 import { PoiLinks } from './PoiLinks'
 import { ReviewsSection } from './ReviewsSection'
+import { WikiCard } from './WikiCard'
 
 export type Selection = { kind: 'poi'; id: string } | { kind: 'draft'; draft: PoiInput } | null
 
@@ -97,6 +98,7 @@ export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeCh
               ×
             </button>
           </div>
+          <WikiCard tripId={trip.id} poi={selectedPoi} />
           <PoiLinks poi={selectedPoi} />
           {/* Noter est plus fréquent que modifier : les avis d'abord, la modification repliée. */}
           <ReviewsSection key={selectedPoi.id} tripId={trip.id} poi={selectedPoi} />

@@ -7,6 +7,7 @@ use api::places::nominatim::Nominatim;
 use api::places::PlaceService;
 use api::routing::valhalla::Valhalla;
 use api::routing::RoutingService;
+use api::wiki::{WikiService, Wikimedia};
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
 
@@ -54,8 +55,10 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    let wiki = Arc::new(WikiService::new(Wikimedia::new(&config.user_agent())?));
+
     let addr = config.bind_addr;
-    let app = api::build_app(db, config, mailer, places, routing);
+    let app = api::build_app(db, config, mailer, places, routing, wiki);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "API démarrée");
     axum::serve(

@@ -174,6 +174,53 @@ describe('lieux', () => {
     }
   })
 
+  it('présente un lieu avec Wikipédia : résumé, photo créditée et guide', async () => {
+    const api = mockApi({
+      ...baseRoutes('viewer', [{ ...museum, wikidata: 'Q1968698' }, { ...museum, id: 'poi-2', name: 'Soda Tala' }]),
+      'GET /trips/trip-1/pois/poi-1/wiki': () => ({
+        status: 200,
+        body: {
+          summary: {
+            title: 'Museo Nacional de Costa Rica',
+            description: 'national museum in San José',
+            extract: 'The National Museum of Costa Rica is located in San José.',
+            lang: 'en',
+            url: 'https://en.wikipedia.org/wiki/Museo_Nacional_de_Costa_Rica',
+            image: {
+              url: 'https://upload.wikimedia.org/museo.jpg',
+              width: 640,
+              height: 480,
+              page_url: 'https://commons.wikimedia.org/wiki/File:Museo.jpg',
+              artist: 'Ana',
+              license: 'CC BY-SA 4.0',
+            },
+            wikivoyage_url: null,
+          },
+        },
+      }),
+    })
+    renderApp('/trips/trip-1')
+    fireEvent.click(await screen.findByRole('button', { name: /^Museo Nacional/ }))
+    const card = await screen.findByRole('region', { name: 'Présentation' })
+    expect(within(card).getByText(/located in San José/)).toBeInTheDocument()
+    expect(within(card).getByRole('img', { name: 'Photo : Museo Nacional de Costa Rica' })).toHaveAttribute(
+      'src',
+      'https://upload.wikimedia.org/museo.jpg',
+    )
+    expect(within(card).getByText(/Ana · CC BY-SA 4\.0/)).toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'Lire la suite sur Wikipédia (en anglais)' })).toHaveAttribute(
+      'href',
+      'https://en.wikipedia.org/wiki/Museo_Nacional_de_Costa_Rica',
+    )
+    expect(within(card).queryByText('Guide Wikivoyage')).not.toBeInTheDocument()
+
+    // Lieu sans référence : pas de présentation, pas de requête.
+    fireEvent.click(screen.getByRole('button', { name: /Soda Tala/ }))
+    await screen.findByRole('heading', { name: /Soda Tala/ })
+    expect(screen.queryByRole('region', { name: 'Présentation' })).not.toBeInTheDocument()
+    expect(api.mock.calls.some(([url]) => String(url).includes('poi-2/wiki'))).toBe(false)
+  })
+
   it('un lecteur consulte les lieux sans pouvoir les modifier', async () => {
     mockApi(baseRoutes('viewer', [museum]))
     renderApp('/trips/trip-1')

@@ -1,4 +1,7 @@
 // Toutes les chaînes de l'interface sont regroupées ici pour faciliter l'i18n plus tard.
+/** Langues des articles Wikipédia proposés (voir `wiki::LANGS` côté serveur). */
+const langNames: Record<string, string> = { en: 'en anglais', es: 'en espagnol' }
+
 export const fr = {
   appName: 'TravelGuide',
   tagline: 'Planifiez votre voyage, ensemble.',
@@ -223,6 +226,16 @@ export const fr = {
     phone: 'Téléphone',
     email: 'Email',
     editDetails: 'Modifier les informations du lieu',
+  },
+  wiki: {
+    title: 'Présentation',
+    loading: 'Chargement de la présentation Wikipédia…',
+    unavailable: 'Présentation Wikipédia momentanément indisponible.',
+    readMore: (lang: string) => `Lire la suite sur Wikipédia${lang === 'fr' ? '' : ` (${langNames[lang] ?? lang})`}`,
+    wikivoyage: 'Guide Wikivoyage',
+    photo: 'Photo',
+    photoAlt: (title: string) => `Photo : ${title}`,
+    textCredit: 'Texte : Wikipédia (CC BY-SA)',
   },
   links: {
     title: 'Liens',

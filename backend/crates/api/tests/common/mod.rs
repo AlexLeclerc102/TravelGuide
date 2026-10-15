@@ -16,6 +16,7 @@ use tower::ServiceExt;
 use api::mail::MemoryMailer;
 use api::places::{Category, OsmRef, OsmType, Place, PlaceService, StaticPlaces};
 use api::routing::{RoutingService, StaticRouter};
+use api::wiki::{Article, Entity, StaticWiki, WikiImage, WikiService};
 
 pub const ORIGIN: &str = "http://localhost:5173";
 pub const PASSWORD: &str = "motdepasse-solide";
@@ -28,6 +29,8 @@ pub struct TestApp {
     pub places: Arc<StaticPlaces>,
     /// Faux moteur de routage (compte les appels, panne simulable).
     pub routing: Arc<StaticRouter>,
+    /// Faux Wikipédia (compte les appels, panne simulable).
+    pub wiki: Arc<StaticWiki>,
 }
 
 pub struct Response {
@@ -45,12 +48,14 @@ impl TestApp {
         let mailer = Arc::new(MemoryMailer::default());
         let places = Arc::new(StaticPlaces::new(sample_places()));
         let routing = Arc::new(StaticRouter::default());
+        let wiki = Arc::new(sample_wiki());
         let router = api::build_app(
             db.clone(),
             config,
             mailer.clone(),
             Arc::new(PlaceService::new(places.clone())),
             Arc::new(RoutingService::new(routing.clone())),
+            Arc::new(WikiService::new(wiki.clone())),
         );
         Self {
             router,
@@ -58,6 +63,7 @@ impl TestApp {
             mailer,
             places,
             routing,
+            wiki,
         }
     }
 
@@ -256,4 +262,43 @@ pub fn sample_places() -> Vec<Place> {
             country_code: Some("CR".into()),
         },
     ]
+}
+
+/// Présentation Wikipédia du musée de [`sample_places`] (élément `Q2638513`).
+pub fn sample_wiki() -> StaticWiki {
+    let mut wiki = StaticWiki::default();
+    wiki.entities.insert(
+        "Q2638513".into(),
+        Entity {
+            sitelinks: [(
+                "frwiki".to_owned(),
+                "Musée national du Costa Rica".to_owned(),
+            )]
+            .into(),
+            image_file: Some("Museo.jpg".into()),
+        },
+    );
+    wiki.articles.insert(
+        "fr:Musée national du Costa Rica".into(),
+        Article {
+            title: "Musée national du Costa Rica".into(),
+            description: Some("musée national situé à San José".into()),
+            extract: "Le Musée national du Costa Rica est fondé en 1887.".into(),
+            lang: "fr".into(),
+            url: "https://fr.wikipedia.org/wiki/Mus%C3%A9e_national_du_Costa_Rica".into(),
+            wikibase_item: Some("Q2638513".into()),
+        },
+    );
+    wiki.images.insert(
+        "Museo.jpg".into(),
+        WikiImage {
+            url: "https://upload.wikimedia.org/museo.jpg".into(),
+            width: 640,
+            height: 480,
+            page_url: "https://commons.wikimedia.org/wiki/File:Museo.jpg".into(),
+            artist: Some("Ana".into()),
+            license: Some("CC BY-SA 4.0".into()),
+        },
+    );
+    wiki
 }

@@ -8,6 +8,7 @@ use crate::places::PlaceService;
 use crate::rate_limit::RateLimiter;
 use crate::realtime::Hub;
 use crate::routing::RoutingService;
+use crate::wiki::WikiService;
 
 /// État partagé entre tous les handlers.
 #[derive(Clone)]
@@ -18,6 +19,8 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     pub places: Arc<PlaceService>,
     pub routing: Arc<RoutingService>,
+    /// Présentations Wikipédia des lieux.
+    pub wiki: Arc<WikiService>,
     /// Canaux temps réel des voyages ouverts.
     pub realtime: Arc<Hub>,
 }

@@ -21,6 +21,7 @@ pub mod travel;
 pub mod trips;
 pub mod users;
 pub mod validate;
+pub mod wiki;
 
 use std::sync::Arc;
 
@@ -39,6 +40,7 @@ use crate::places::PlaceService;
 use crate::rate_limit::RateLimiter;
 use crate::routing::RoutingService;
 use crate::state::AppState;
+use crate::wiki::WikiService;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -59,6 +61,7 @@ pub fn build_app(
     mailer: Arc<dyn Mailer>,
     places: Arc<PlaceService>,
     routing: Arc<RoutingService>,
+    wiki: Arc<WikiService>,
 ) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(HeaderValue::from_str(&config.public_origin).expect("PUBLIC_ORIGIN invalide"))
@@ -82,6 +85,7 @@ pub fn build_app(
         rate_limiter: Arc::new(RateLimiter::default()),
         places,
         routing,
+        wiki,
         realtime: Arc::new(realtime::Hub::default()),
     };
 

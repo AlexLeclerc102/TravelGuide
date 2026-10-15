@@ -132,6 +132,27 @@ export interface OpeningPreview {
   days: DaySchedule[]
 }
 
+/** Photo Wikimedia Commons, avec ses crédits. */
+export interface WikiImage {
+  url: string
+  width: number
+  height: number
+  page_url: string
+  artist: string | null
+  license: string | null
+}
+
+/** Présentation d'un lieu tirée de Wikipédia. */
+export interface WikiSummary {
+  title: string
+  description: string | null
+  extract: string
+  lang: string
+  url: string
+  image: WikiImage | null
+  wikivoyage_url: string | null
+}
+
 /** Zone affichée : `[minLon, minLat, maxLon, maxLat]`. */
 export type Bounds = [number, number, number, number]
 
@@ -140,6 +161,8 @@ const json = (method: string, body: unknown): RequestInit => ({ method, body: JS
 export const poiKeys = {
   list: (tripId: string) => [...tripKeys.one(tripId), 'pois'] as const,
   reviews: (tripId: string, poiId: string) => [...tripKeys.one(tripId), 'pois', poiId, 'reviews'] as const,
+  wiki: (tripId: string, poi: Pick<Poi, 'id' | 'wikidata' | 'wikipedia'>) =>
+    [...tripKeys.one(tripId), 'pois', poi.id, 'wiki', poi.wikidata, poi.wikipedia] as const,
   opening: (tripId: string, value: string, country: string | null) =>
     [...tripKeys.one(tripId), 'opening', value, country] as const,
 }
@@ -237,6 +260,17 @@ export const useOpeningPreview = (tripId: string, value: string, country: string
       ),
     enabled: value.trim().length > 0,
     staleTime: Infinity,
+  })
+
+/** Présentation Wikipédia, demandée seulement si le lieu a une référence. */
+export const usePoiWiki = (tripId: string, poi: Poi) =>
+  useQuery({
+    queryKey: poiKeys.wiki(tripId, poi),
+    queryFn: () => apiFetch<{ summary: WikiSummary | null }>(`/trips/${tripId}/pois/${poi.id}/wiki`),
+    enabled: !!(poi.wikidata || poi.wikipedia),
+    staleTime: 60 * 60_000,
+    retry: false,
+    select: (data) => data.summary,
   })
 
 export const useReviews = (tripId: string, poiId: string) =>

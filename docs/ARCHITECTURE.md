@@ -8,6 +8,7 @@
 | Transports en commun | Pas de GTFS exploitable au Costa Rica, Navitia ne le couvre pas : approximation (temps voiture × 1,8 + 15 min) clairement signalée « estimation ». |
 | Recherche de lieux | Nominatim public via le backend (cache, 1 req/s, User-Agent identifié, pas d'autocomplétion). Auto-hébergement prévu avant production. |
 | Détails POI | Tags OSM fournis par Nominatim (`extratags` : `opening_hours`, `website`, `phone`, `email`, `wikidata`, `wikipedia`), horaires interprétés avec la crate `opening-hours`. Overpass n'apporte rien de plus pour le MVP (révisé à l'incrément 3). |
+| Présentation des lieux | Wikipédia (résumé), Wikidata (articles par langue, photo P18) et Wikimedia Commons (miniature, auteur, licence), via le backend avec cache 7 jours. Langues : fr, puis en, puis es. |
 | Fond de carte | OpenFreeMap (tuiles vectorielles, sans clé). |
 | Authentification | Mot de passe (Argon2id) + lien magique (SMTP, Mailpit en dev). Sessions en base, cookie HttpOnly. |
 | Invités | Le lien d'invitation demande prénom + email : compte sans mot de passe créé et connecté immédiatement. |
@@ -101,6 +102,17 @@
   d'un lieu affiche à tous les membres un bloc « Liens » construit côté interface
   (`lib/links.ts`) : site officiel, appel, email, Wikipédia, fiche OpenStreetMap, recherche et
   itinéraire Google Maps (nom + adresse, sinon coordonnées). Aucun appel tant qu'on ne clique pas.
+- **Présentation Wikipédia** (`GET /trips/{id}/pois/{poi}/wiki`, module `wiki`) : pour un lieu
+  qui a un tag `wikidata` ou `wikipedia`. L'élément Wikidata donne les articles (fr, puis en, puis
+  es, sinon l'article du tag) et la photo P18 ; sans Wikidata, l'élément est retrouvé via
+  l'article du tag. Résumé par l'API REST de Wikipédia (pages d'homonymie ignorées), photo par
+  Commons avec auteur et licence affichés (attribution obligatoire), lien Wikivoyage s'il existe.
+  Seules les références d'un lieu visible par l'utilisateur sont résolues (pas de relais ouvert) ;
+  liens limités aux domaines Wikimedia en https. Cache mémoire 7 jours (absences comprises,
+  erreurs non), 60 requêtes / min par utilisateur, **503** si Wikimedia ne répond pas (l'interface
+  l'indique sans bloquer la fiche). Une photo indisponible n'empêche pas d'afficher le texte.
+  La miniature est chargée par le navigateur depuis les serveurs Wikimedia (sans `Referer`),
+  comme les tuiles de la carte le sont depuis OpenFreeMap.
 - **RGPD** : l'export inclut les lieux ajoutés ; à la suppression du compte, ils restent dans les
   voyages sans auteur.
 - **Carte** : le worker MapLibre est fourni explicitement (`setWorkerUrl` + import `?url`), sinon

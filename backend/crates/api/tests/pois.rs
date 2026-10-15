@@ -486,3 +486,52 @@ async fn place_search_is_rate_limited_per_user(db: PgPool) {
         StatusCode::OK
     );
 }
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn wikipedia_summary_of_a_place(db: PgPool) {
+    let app = TestApp::new(db);
+    let (_orga, editor, viewer, trip) = setup(&app).await;
+    let uri = format!("/api/v1/trips/{trip}/pois");
+    let mut body = museum();
+    body["wikidata"] = json!("Q2638513");
+    let museum_id = app.post(&uri, body, Some(&editor)).await.body["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let plain = app
+        .post(
+            &uri,
+            json!({ "name": "Soda", "lat": 9.9, "lon": -84.0 }),
+            Some(&editor),
+        )
+        .await
+        .body["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // Un lecteur aussi ; résumé, photo créditée et lien vers l'article.
+    let res = app
+        .get(&format!("{uri}/{museum_id}/wiki"), Some(&viewer))
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    let s = &res.body["summary"];
+    assert_eq!(s["title"], "Musée national du Costa Rica");
+    assert_eq!(s["lang"], "fr");
+    assert_eq!(s["image"]["artist"], "Ana");
+    assert_eq!(s["image"]["license"], "CC BY-SA 4.0");
+
+    // Sans référence : rien, sans appeler Wikipédia.
+    let calls = app.wiki.calls.load(Ordering::SeqCst);
+    let res = app.get(&format!("{uri}/{plain}/wiki"), Some(&viewer)).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(res.body["summary"], Value::Null);
+    assert_eq!(app.wiki.calls.load(Ordering::SeqCst), calls);
+
+    // Lieu d'un autre voyage, ou non-membre : 404.
+    let outsider = app.register("out@example.com", "Hors voyage").await;
+    let res = app
+        .get(&format!("{uri}/{museum_id}/wiki"), Some(&outsider))
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+}

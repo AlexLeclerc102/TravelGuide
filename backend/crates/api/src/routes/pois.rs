@@ -18,12 +18,14 @@ use crate::realtime::{ClientId, Topic};
 use crate::state::AppState;
 use crate::trips::{self, Role};
 use crate::validate;
+use crate::wiki::WikiSummary;
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_pois, create_poi))
         .routes(routes!(get_poi, update_poi, delete_poi))
         .routes(routes!(preview_opening_hours))
+        .routes(routes!(poi_wiki))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -70,6 +72,16 @@ pub struct UpdatePoi {
     pub notes: Option<String>,
 }
 
+/// Présentation Wikipédia d'un lieu.
+#[derive(Serialize, ToSchema)]
+pub struct PoiWiki {
+    /// `null` si le lieu n'a pas de référence Wikipédia / Wikidata, ou si l'article n'existe pas.
+    pub summary: Option<WikiSummary>,
+}
+
+/// Présentations demandées par utilisateur et par minute (le cache n'est pas décompté à part).
+const WIKI_PER_USER_PER_MINUTE: u32 = 60;
+
 #[derive(Deserialize, ToSchema)]
 pub struct OpeningPreviewRequest {
     pub opening_hours: String,
@@ -83,6 +95,36 @@ pub struct OpeningPreview {
     /// Erreur de syntaxe (si `status` vaut `invalid`).
     pub error: Option<String>,
     pub days: Vec<DaySchedule>,
+}
+
+/// Présentation du lieu tirée de Wikipédia (résumé, photo Commons créditée, guide
+/// Wikivoyage), d'après ses références `wikidata` / `wikipedia`. Textes et photos sous
+/// licences libres, à créditer.
+#[utoipa::path(get, path = "/trips/{trip_id}/pois/{poi_id}/wiki", tag = "lieux",
+    params(("trip_id" = Uuid, Path), ("poi_id" = Uuid, Path)),
+    responses((status = 200, body = PoiWiki), (status = 404, body = ErrorBody),
+        (status = 429, body = ErrorBody), (status = 503, body = ErrorBody)))]
+async fn poi_wiki(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path((trip_id, poi_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Json<PoiWiki>> {
+    trips::require_role(&state.db, trip_id, current.user.id, Role::Viewer).await?;
+    let dates = pois::trip_dates(&state.db, trip_id).await?;
+    let poi = pois::get(&state.db, trip_id, poi_id, current.user.id, dates).await?;
+    if poi.wikidata.is_none() && poi.wikipedia.is_none() {
+        return Ok(Json(PoiWiki { summary: None }));
+    }
+    state.rate_limiter.check(
+        &format!("wiki:{}", current.user.id),
+        WIKI_PER_USER_PER_MINUTE,
+        std::time::Duration::from_secs(60),
+    )?;
+    let summary = state
+        .wiki
+        .summary(poi.wikidata.as_deref(), poi.wikipedia.as_deref())
+        .await?;
+    Ok(Json(PoiWiki { summary }))
 }
 
 /// POI du voyage.
