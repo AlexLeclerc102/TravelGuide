@@ -10,6 +10,7 @@ pub mod members;
 pub mod places;
 pub mod pois;
 pub mod reviews;
+pub mod transport;
 pub mod trips;
 
 /// Toutes les routes de `/api/v1`.
@@ -24,4 +25,5 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(places::router())
         .merge(pois::router())
         .merge(reviews::router())
+        .merge(transport::router())
 }

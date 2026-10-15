@@ -29,6 +29,8 @@ interface Props {
   draft?: { lat: number; lon: number } | null
   /** Mode « ajout par clic » : curseur en croix, les clics appellent `onMapClick`. */
   addMode?: boolean
+  /** Tracé `[lon, lat]` d'un trajet à afficher (`null` : aucun). */
+  route?: [number, number][] | null
   onSelect?: (id: string) => void
   onMapClick?: (lat: number, lon: number) => void
   onBoundsChange?: (bounds: Bounds) => void
@@ -48,13 +50,17 @@ function markerElement(m: MapMarker, onClick: () => void) {
   return el
 }
 
-export function MapView({ markers = [], selectedId, draft, addMode, onSelect, onMapClick, onBoundsChange }: Props) {
+const ROUTE_SOURCE = 'route'
+
+export function MapView({ markers = [], selectedId, draft, addMode, route, onSelect, onMapClick, onBoundsChange }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const markerRefs = useRef(new Map<string, { marker: maplibregl.Marker; key: string }>())
   const draftRef = useRef<maplibregl.Marker | null>(null)
   const fitted = useRef(false)
   const [failed, setFailed] = useState(false)
+  // Le style doit être chargé avant d'ajouter une source (tracé du trajet).
+  const [styleReady, setStyleReady] = useState(false)
   // Rappels courants, lus par les écouteurs créés une seule fois.
   const callbacks = useRef({ onSelect, onMapClick, onBoundsChange, addMode })
   callbacks.current = { onSelect, onMapClick, onBoundsChange, addMode }
@@ -77,6 +83,7 @@ export function MapView({ markers = [], selectedId, draft, addMode, onSelect, on
       callbacks.current.onBoundsChange?.([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()])
     }
     map.on('load', reportBounds)
+    map.on('load', () => setStyleReady(true))
     map.on('moveend', reportBounds)
     map.on('click', (e) => {
       if (callbacks.current.addMode) callbacks.current.onMapClick?.(e.lngLat.lat, e.lngLat.lng)
@@ -149,6 +156,35 @@ export function MapView({ markers = [], selectedId, draft, addMode, onSelect, on
   useEffect(() => {
     mapRef.current?.getCanvas().style.setProperty('cursor', addMode ? 'crosshair' : '')
   }, [addMode])
+
+  // Tracé du trajet : une seule source GeoJSON, mise à jour à chaque changement.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !styleReady) return
+    const data = {
+      type: 'Feature' as const,
+      properties: {},
+      geometry: { type: 'LineString' as const, coordinates: route ?? [] },
+    }
+    const source = map.getSource<maplibregl.GeoJSONSource>(ROUTE_SOURCE)
+    if (source) {
+      source.setData(data)
+    } else {
+      map.addSource(ROUTE_SOURCE, { type: 'geojson', data })
+      map.addLayer({
+        id: ROUTE_SOURCE,
+        type: 'line',
+        source: ROUTE_SOURCE,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#0f766e', 'line-width': 5, 'line-opacity': 0.8 },
+      })
+    }
+    if (route && route.length > 1) {
+      const b = new maplibregl.LngLatBounds()
+      route.forEach((c) => b.extend(c))
+      map.fitBounds(b, { padding: 80, maxZoom: 15 })
+    }
+  }, [route, styleReady])
 
   if (failed) {
     return (

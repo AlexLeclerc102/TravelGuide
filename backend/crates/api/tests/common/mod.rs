@@ -15,6 +15,7 @@ use tower::ServiceExt;
 
 use api::mail::MemoryMailer;
 use api::places::{Category, OsmRef, OsmType, Place, PlaceService, StaticPlaces};
+use api::routing::{RoutingService, StaticRouter};
 
 pub const ORIGIN: &str = "http://localhost:5173";
 pub const PASSWORD: &str = "motdepasse-solide";
@@ -25,6 +26,8 @@ pub struct TestApp {
     pub mailer: Arc<MemoryMailer>,
     /// Faux fournisseur de lieux (compte les appels).
     pub places: Arc<StaticPlaces>,
+    /// Faux moteur de routage (compte les appels, panne simulable).
+    pub routing: Arc<StaticRouter>,
 }
 
 pub struct Response {
@@ -41,17 +44,20 @@ impl TestApp {
     pub fn with_config(db: PgPool, config: api::config::Config) -> Self {
         let mailer = Arc::new(MemoryMailer::default());
         let places = Arc::new(StaticPlaces::new(sample_places()));
+        let routing = Arc::new(StaticRouter::default());
         let router = api::build_app(
             db.clone(),
             config,
             mailer.clone(),
             Arc::new(PlaceService::new(places.clone())),
+            Arc::new(RoutingService::new(routing.clone())),
         );
         Self {
             router,
             db,
             mailer,
             places,
+            routing,
         }
     }
 

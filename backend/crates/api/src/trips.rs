@@ -74,7 +74,7 @@ impl TransportMode {
         }
     }
 
-    fn parse(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "walk" => TransportMode::Walk,
             "bike" => TransportMode::Bike,
@@ -83,6 +83,37 @@ impl TransportMode {
             _ => return None,
         })
     }
+}
+
+impl From<TransportMode> for planner::travel::Mode {
+    fn from(m: TransportMode) -> Self {
+        match m {
+            TransportMode::Walk => Self::Walk,
+            TransportMode::Bike => Self::Bike,
+            TransportMode::Car => Self::Car,
+            TransportMode::Transit => Self::Transit,
+        }
+    }
+}
+
+impl From<planner::travel::Mode> for TransportMode {
+    fn from(m: planner::travel::Mode) -> Self {
+        use planner::travel::Mode;
+        match m {
+            Mode::Walk => Self::Walk,
+            Mode::Bike => Self::Bike,
+            Mode::Car => Self::Car,
+            Mode::Transit => Self::Transit,
+        }
+    }
+}
+
+/// Modes stockés en base (valeurs inconnues ignorées).
+pub fn parse_modes(stored: &[String]) -> Vec<TransportMode> {
+    stored
+        .iter()
+        .filter_map(|m| TransportMode::parse(m))
+        .collect()
 }
 
 /// Liste de modes non vide et sans doublon, dans l'ordre donné.
@@ -197,11 +228,7 @@ impl TryFrom<TripRow> for Trip {
             timezone: r.timezone,
             day_start: r.day_start,
             day_end: r.day_end,
-            default_modes: r
-                .default_modes
-                .iter()
-                .filter_map(|m| TransportMode::parse(m))
-                .collect(),
+            default_modes: parse_modes(&r.default_modes),
             version: r.version,
             my_role: r.my_role.parse()?,
             member_count: r.member_count,

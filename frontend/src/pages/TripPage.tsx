@@ -9,11 +9,12 @@ import { MapView } from '../components/MapView'
 import { InvitationsPanel } from '../components/trip/InvitationsPanel'
 import { MembersPanel } from '../components/trip/MembersPanel'
 import { PoiPanel, type Selection } from '../components/trip/PoiPanel'
+import { TransportPanel } from '../components/trip/TransportPanel'
 import { TripForm } from '../components/trip/TripForm'
 import { t } from '../i18n/fr'
 import { dayCount, formatDateRange } from '../lib/format'
 
-type Tab = 'places' | 'members' | 'settings'
+type Tab = 'places' | 'transport' | 'members' | 'settings'
 
 export function TripPage() {
   const { tripId = '' } = useParams()
@@ -39,6 +40,7 @@ function TripView({ trip }: { trip: Trip }) {
   const [locating, setLocating] = useState(false)
   const [locateError, setLocateError] = useState<unknown>(null)
   const [bounds, setBounds] = useState<Bounds | null>(null)
+  const [route, setRoute] = useState<[number, number][] | null>(null)
 
   // Échap annule le mode « ajout par clic ».
   useEffect(() => {
@@ -93,7 +95,7 @@ function TripView({ trip }: { trip: Trip }) {
           </p>
         </header>
         <div className="tabs" role="tablist">
-          {(['places', 'members', 'settings'] as Tab[]).map((k) => (
+          {(['places', 'transport', 'members', 'settings'] as Tab[]).map((k) => (
             <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>
               {t.tabs[k]}
             </button>
@@ -115,6 +117,7 @@ function TripView({ trip }: { trip: Trip }) {
             bounds={bounds}
           />
         )}
+        {tab === 'transport' && <TransportPanel trip={trip} pois={pois} onRouteChange={setRoute} />}
         {tab === 'members' && (
           <>
             <MembersPanel trip={trip} />
@@ -134,6 +137,7 @@ function TripView({ trip }: { trip: Trip }) {
           selectedId={selection?.kind === 'poi' ? selection.id : null}
           draft={draft && { lat: draft.lat, lon: draft.lon }}
           addMode={addMode}
+          route={route}
           onSelect={(id) => {
             setTab('places')
             setSelection({ kind: 'poi', id })

@@ -215,3 +215,38 @@ button.danger-outline { color: var(--error); border-color: var(--error); }
 .icon-button { border: none; background: none; font-size: 1.4rem; line-height: 1; padding: 0 0.3rem; }
 .edit-details, .poi-details { border-top: 1px solid var(--border); margin-top: 0.8rem; padding-top: 0.6rem; }
 .edit-details summary { cursor: pointer; color: var(--accent); margin-bottom: 0.6rem; }
+
+/* Transports (incrément 5) */
+.day-list { list-style: none; padding: 0; margin: 0.6rem 0; display: grid; gap: 0.5rem; }
+.day-row {
+  display: grid; gap: 0.4rem; padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.day-row.custom { border-left: 3px solid var(--accent); }
+.day-head { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
+.mode-chips { gap: 0.35rem; }
+.mode-chips .chip { padding: 0.15rem 0.55rem; font-size: 0.85rem; }
+.mode-chips .chip.on { border-color: var(--accent); color: var(--accent); }
+.mode-chips:disabled .chip { cursor: default; opacity: 0.85; }
+.lodging-select { display: flex !important; gap: 0.5rem; align-items: center; }
+.lodging-select select { flex: 1; min-width: 0; padding: 0.25rem 0.4rem; font-size: 0.85rem; }
+.link-button {
+  border: none; background: none; padding: 0; color: var(--accent);
+  text-decoration: underline; cursor: pointer; margin-left: auto;
+}
+.route-compare .form { gap: 0.5rem; }
+.travel-options { list-style: none; padding: 0; margin: 0.8rem 0 0.4rem; display: grid; gap: 0.35rem; }
+.travel-options li {
+  display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap;
+  padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 8px;
+}
+.travel-options li.chosen { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.travel-mode { flex: 1 1 8rem; }
+.travel-time { font-weight: 600; font-variant-numeric: tabular-nums; }
+.tag-estimate { color: var(--warning); }
+/* Les noms de lieux longs dans les listes déroulantes ne doivent pas élargir la barre latérale. */
+.trip-sidebar > *, .poi-panel > *, .day-row { min-width: 0; }
+.route-compare select, .lodging-select select { width: 100%; max-width: 100%; text-overflow: ellipsis; }
+/* Quatre onglets : ils doivent tenir dans la barre latérale (420 px). */
+.tabs { flex-wrap: wrap; gap: 0.3rem; }
+.tabs button { padding: 0.35rem 0.55rem; font-size: 0.9rem; }

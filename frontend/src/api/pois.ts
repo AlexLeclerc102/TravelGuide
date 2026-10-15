@@ -164,8 +164,11 @@ export function useUpdatePoi(tripId: string) {
   return useMutation({
     mutationFn: ({ id, ...patch }: Partial<PoiInput> & { id: string; version: number }) =>
       apiFetch<Poi>(`/trips/${tripId}/pois/${id}`, json('PATCH', patch)),
-    onSuccess: (poi) =>
-      qc.setQueryData<Poi[]>(poiKeys.list(tripId), (list) => list?.map((p) => (p.id === poi.id ? poi : p))),
+    onSuccess: (poi) => {
+      qc.setQueryData<Poi[]>(poiKeys.list(tripId), (list) => list?.map((p) => (p.id === poi.id ? poi : p)))
+      // Le lieu a pu être déplacé : les trajets sont à recalculer.
+      qc.invalidateQueries({ queryKey: tripKeys.routes(tripId) })
+    },
     // Conflit de version : on recharge la liste à jour.
     onError: () => qc.invalidateQueries({ queryKey: poiKeys.list(tripId) }),
   })
@@ -175,7 +178,11 @@ export function useDeletePoi(tripId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiFetch<void>(`/trips/${tripId}/pois/${id}`, { method: 'DELETE' }),
-    onSuccess: (_, id) => qc.setQueryData<Poi[]>(poiKeys.list(tripId), (list) => list?.filter((p) => p.id !== id)),
+    onSuccess: (_, id) => {
+      qc.setQueryData<Poi[]>(poiKeys.list(tripId), (list) => list?.filter((p) => p.id !== id))
+      // Un hébergement supprimé disparaît des jours où il servait de départ.
+      qc.invalidateQueries({ queryKey: tripKeys.days(tripId) })
+    },
   })
 }
 

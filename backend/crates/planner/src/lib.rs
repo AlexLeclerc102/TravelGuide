@@ -6,3 +6,4 @@
 
 pub mod geo;
 pub mod ratings;
+pub mod travel;

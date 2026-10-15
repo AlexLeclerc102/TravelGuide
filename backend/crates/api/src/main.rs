@@ -5,6 +5,8 @@ use anyhow::Context;
 use api::mail::{LogMailer, Mailer, SmtpMailer};
 use api::places::nominatim::Nominatim;
 use api::places::PlaceService;
+use api::routing::valhalla::Valhalla;
+use api::routing::RoutingService;
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
 
@@ -44,8 +46,16 @@ async fn main() -> anyhow::Result<()> {
         &config.user_agent(),
     )?));
 
+    let routing = Arc::new(match &config.valhalla_url {
+        Some(url) => RoutingService::new(Valhalla::new(url, &config.user_agent())?),
+        None => {
+            tracing::warn!("VALHALLA_URL absent : les trajets seront estimés à vol d'oiseau");
+            RoutingService::straight_line_only()
+        }
+    });
+
     let addr = config.bind_addr;
-    let app = api::build_app(db, config, mailer, places);
+    let app = api::build_app(db, config, mailer, places, routing);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "API démarrée");
     axum::serve(

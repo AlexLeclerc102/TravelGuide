@@ -19,3 +19,18 @@ export function dayCount(start: string, end: string) {
 
 /** Note formatée à la française, une décimale au plus (ex. « 4,3 »). */
 export const formatRating = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 1 })
+
+/** Durée de trajet : « 12 min », « 1 h 05 » (arrondie à la minute, au moins 1 min si non nulle). */
+export function formatDuration(seconds: number) {
+  const min = seconds > 0 ? Math.max(1, Math.round(seconds / 60)) : 0
+  if (min < 60) return `${min} min`
+  const rest = min % 60
+  return `${Math.floor(min / 60)} h${rest ? ` ${String(rest).padStart(2, '0')}` : ''}`
+}
+
+/** Distance : « 850 m », « 12,3 km », « 128 km ». */
+export function formatDistance(meters: number) {
+  if (meters < 1000) return `${Math.round(meters / 10) * 10} m`
+  const km = meters / 1000
+  return `${km.toLocaleString('fr-FR', { maximumFractionDigits: km < 100 ? 1 : 0 })} km`
+}

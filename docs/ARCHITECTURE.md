@@ -64,7 +64,7 @@
   **ferme toutes les sessions existantes** de ce compte.
 - **Suppression de compte** : transfert de chaque voyage organisé à l'éditeur le plus ancien, sinon
   suppression du voyage (les lecteurs ne reçoivent pas l'organisation).
-- **Reporté** : `trip_days` (modes et hébergement par jour) arrive avec l'incrément transports.
+- **Reporté** : `trip_days` (modes et hébergement par jour) arrive avec l'incrément transports (fait à l'incrément 5).
 
 ## Points d'intérêt (incrément 3)
 
@@ -118,3 +118,32 @@
 - **Interface** : fiche du lieu avec les avis en premier (moyenne, désaccord expliqué, avis
   extrêmes mis en évidence), la modification du lieu étant repliée ; liste avec note du groupe,
   badge « Désaccord », rappel « À noter », et tri par ordre d'ajout, note ou désaccord.
+
+## Transports et routage (incrément 5)
+
+- **Modes par jour** (`trip_days`) : une ligne n'existe que si le jour s'écarte du voyage. `modes`
+  NULL = modes par défaut du voyage (`modes_inherited`), sinon liste propre au jour ; `base_poi_id`
+  = hébergement (départ et arrivée de la journée, n'importe quel lieu du voyage), remis à NULL si
+  le lieu est supprimé. Réglages des jours sortis des dates supprimés quand le voyage raccourcit.
+- **Droits** : lecture pour tous les membres ; jours modifiables par les éditeurs (dernière
+  écriture gagnante, `PUT /trips/{t}/days/{date}` remplace tout) ; modes par défaut du voyage
+  réservés à l'organisateur (paramètres). Calcul de trajets ouvert aux lecteurs (lecture seule).
+- **Routage** (`api::routing`) : trait `RoutingProvider`, implémenté par Valhalla
+  (`sources_to_targets` pour les matrices, `route` pour les trajets avec tracé polyline6).
+  `RoutingService` ne renvoie jamais d'erreur : panne, région non reliée, lieu loin d'une route ou
+  distance hors limites → **estimation à vol d'oiseau** (distance × 1,3 à pied/vélo, × 1,4 en
+  voiture ; 4,5 / 14 / 40 km/h). Une panne coupe le moteur pour le reste de la requête (pas de
+  cumul de délais). Matrices découpées par groupes de lignes (2 500 paires par requête), un
+  groupe sans chemin est réessayé ligne par ligne ; itinéraires découpés par fenêtres de 20 points,
+  une fenêtre sans chemin est reprise paire par paire. Cache mémoire 7 jours (200 000 trajets,
+  coordonnées au mètre) des seuls résultats du moteur. Sans `VALHALLA_URL` : vol d'oiseau partout.
+- **Transports en commun** : toujours estimés, `temps voiture × 1,8 + 15 min`, tracé de la
+  voiture ; signalés dans l'API (`source = transit_estimate`) et l'interface.
+- **Choix du mode d'une étape** (`planner::travel::choose_mode`, réutilisé par l'itinéraire) :
+  marche si ≤ 20 min, sinon vélo si ≤ 45 min, sinon l'option la plus rapide ; égalité départagée
+  dans l'ordre marche, vélo, voiture, transports en commun.
+- **API** : `GET /trips/{t}/days`, `PUT /trips/{t}/days/{date}`, `POST /trips/{t}/routes`
+  (2 à 25 lieux dans l'ordre, modes explicites ou ceux d'un jour ou du voyage ; renvoie chaque
+  option, l'option retenue, son tracé GeoJSON et `has_estimates`). 60 calculs / min par utilisateur.
+- **Interface** : onglet « Transports » (modes et hébergement de chaque jour, comparaison d'un
+  trajet entre deux lieux, tracé retenu affiché sur la carte, estimations marquées « ≈ »).

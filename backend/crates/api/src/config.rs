@@ -23,6 +23,8 @@ pub struct Config {
     pub nominatim_url: String,
     /// Contact (email ou URL) ajouté au User-Agent, exigé par la politique d'usage de Nominatim.
     pub nominatim_contact: Option<String>,
+    /// Moteur de routage Valhalla. Absent : trajets estimés à vol d'oiseau.
+    pub valhalla_url: Option<String>,
 }
 
 impl Config {
@@ -53,6 +55,9 @@ impl Config {
             nominatim_contact: std::env::var("NOMINATIM_CONTACT")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
+            valhalla_url: std::env::var("VALHALLA_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
         })
     }
 
@@ -69,6 +74,7 @@ impl Config {
             organizer_emails: vec![],
             nominatim_url: String::new(),
             nominatim_contact: None,
+            valhalla_url: None,
         }
     }
 

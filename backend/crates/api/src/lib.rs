@@ -5,6 +5,7 @@ pub mod auth;
 pub mod client_ip;
 pub mod config;
 pub mod csrf;
+pub mod days;
 pub mod error;
 pub mod mail;
 pub mod opening;
@@ -12,6 +13,7 @@ pub mod places;
 pub mod pois;
 pub mod rate_limit;
 pub mod routes;
+pub mod routing;
 pub mod state;
 pub mod trips;
 pub mod users;
@@ -32,6 +34,7 @@ use crate::config::Config;
 use crate::mail::Mailer;
 use crate::places::PlaceService;
 use crate::rate_limit::RateLimiter;
+use crate::routing::RoutingService;
 use crate::state::AppState;
 
 #[derive(OpenApi)]
@@ -52,6 +55,7 @@ pub fn build_app(
     config: Config,
     mailer: Arc<dyn Mailer>,
     places: Arc<PlaceService>,
+    routing: Arc<RoutingService>,
 ) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(HeaderValue::from_str(&config.public_origin).expect("PUBLIC_ORIGIN invalide"))
@@ -71,6 +75,7 @@ pub fn build_app(
         mailer,
         rate_limiter: Arc::new(RateLimiter::default()),
         places,
+        routing,
     };
 
     let (api, openapi) = OpenApiRouter::with_openapi(ApiDoc::openapi())

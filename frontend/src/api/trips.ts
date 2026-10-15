@@ -66,6 +66,8 @@ export const tripKeys = {
   one: (id: string) => ['trips', id] as const,
   members: (id: string) => ['trips', id, 'members'] as const,
   invitations: (id: string) => ['trips', id, 'invitations'] as const,
+  days: (id: string) => ['trips', id, 'days'] as const,
+  routes: (id: string) => ['trips', id, 'route'] as const,
 }
 
 export const useTrips = () =>
@@ -93,6 +95,9 @@ export function useUpdateTrip(id: string) {
     onSuccess: (trip) => {
       qc.setQueryData(tripKeys.one(id), trip)
       qc.invalidateQueries({ queryKey: tripKeys.all, exact: true })
+      // Dates ou modes par défaut modifiés : les jours changent.
+      qc.invalidateQueries({ queryKey: tripKeys.days(id) })
+      qc.invalidateQueries({ queryKey: tripKeys.routes(id) })
     },
     // Conflit de version : on recharge la version à jour.
     onError: () => qc.invalidateQueries({ queryKey: tripKeys.one(id) }),

@@ -210,6 +210,13 @@ async fn update_trip(
             "le voyage a été modifié entre-temps, rechargez-le".into(),
         ));
     }
+    // Les réglages des jours sortis du voyage ne reviendraient pas si on rallongeait les dates.
+    sqlx::query("DELETE FROM trip_days WHERE trip_id = $1 AND date NOT BETWEEN $2 AND $3")
+        .bind(trip_id)
+        .bind(start_date)
+        .bind(end_date)
+        .execute(&state.db)
+        .await?;
     Ok(Json(
         trips::get_for_user(&state.db, trip_id, current.user.id).await?,
     ))
