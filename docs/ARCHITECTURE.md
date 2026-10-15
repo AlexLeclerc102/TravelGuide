@@ -246,3 +246,17 @@
   (`tokio-tungstenite`) : notifications et présence, refus hors membres / mauvaise origine /
   sans session, déconnexion d'un membre retiré et d'un voyage supprimé ; frontend avec un
   WebSocket factice (invalidations, onglet auteur ignoré, reconnexion, accès perdu).
+
+## Tests de bout en bout
+
+- **Playwright** (`e2e/`, version 1.63.0, image officielle `mcr.microsoft.com/playwright`),
+  service `e2e` de docker-compose (profil `e2e`), réseau de l'hôte : le navigateur utilise
+  l'origine `http://localhost:5173` autorisée par l'API (CSRF, `Origin` du WebSocket).
+- **Parcours** : voir le README. Deux contextes de navigateur (deux personnes) ; la carte
+  MapLibre s'affiche réellement (WebGL logiciel de Chromium) ; Valhalla calcule les trajets.
+- **Sans service externe** : lieux créés par l'API depuis la page (même cookie et même
+  `Origin` que l'application, ce qui vérifie au passage la mise à jour en direct de la liste) ;
+  emails lus par l'API de Mailpit.
+- **Pas en CI pour l'instant** : la pile complète demande la construction des tuiles Valhalla
+  (téléchargement de l'extrait OSM, plusieurs minutes). À ajouter en déclenchement manuel ou
+  nocturne avec un cache des tuiles.

@@ -54,7 +54,25 @@ services:
       - frontend-node-modules:/app/node_modules
     depends_on: [backend]
 
+  # Tests de bout en bout (Playwright), contre la pile déjà lancée :
+  #   docker compose --profile e2e run --rm e2e
+  # Réseau de l'hôte : le navigateur de test utilise la même origine que vous
+  # (http://localhost:5173), celle qu'autorise l'API.
+  e2e:
+    image: mcr.microsoft.com/playwright:v1.63.0-noble
+    profiles: [e2e]
+    network_mode: host
+    working_dir: /e2e
+    environment:
+      E2E_BASE_URL: http://localhost:5173
+      MAILPIT_URL: http://localhost:8025
+    command: sh -c "npm ci --no-audit --no-fund && npx playwright test"
+    volumes:
+      - ./e2e:/e2e
+      - e2e-node-modules:/e2e/node_modules
+
 volumes:
+  e2e-node-modules:
   db-data:
   valhalla-data:
   frontend-node-modules:

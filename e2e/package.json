@@ -1,0 +1,13 @@
+{
+  "name": "travelguide-e2e",
+  "private": true,
+  "description": "Tests de bout en bout (Playwright) contre la pile docker-compose lancée",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}
