@@ -70,6 +70,12 @@ pub struct Place {
     pub osm: Option<OsmRef>,
     pub opening_hours: Option<String>,
     pub website: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    /// Identifiant Wikidata (ex. `Q190622`).
+    pub wikidata: Option<String>,
+    /// Article Wikipédia au format OSM `langue:Titre`.
+    pub wikipedia: Option<String>,
     /// Code pays ISO en majuscules (ex. `CR`).
     pub country_code: Option<String>,
 }
@@ -161,7 +167,7 @@ const CACHE_MAX: usize = 5_000;
 #[derive(Clone)]
 enum Cached {
     Search(Vec<Place>),
-    Reverse(Option<Place>),
+    Reverse(Option<Box<Place>>),
 }
 
 /// Fournisseur + cache en mémoire (une instance ; TTL 24 h).
@@ -216,10 +222,10 @@ impl PlaceService {
         // ~1 m de précision : deux clics au même endroit partagent le cache.
         let key = format!("r|{lat:.5}|{lon:.5}");
         if let Some(Cached::Reverse(v)) = self.get(&key) {
-            return Ok(v);
+            return Ok(v.map(|p| *p));
         }
         let place = self.provider.reverse(lat, lon).await?;
-        self.put(key, Cached::Reverse(place.clone()));
+        self.put(key, Cached::Reverse(place.clone().map(Box::new)));
         Ok(place)
     }
 }
@@ -297,6 +303,10 @@ mod tests {
             }),
             opening_hours: Some("Tu-Sa 08:30-16:30".into()),
             website: None,
+            phone: None,
+            email: None,
+            wikidata: None,
+            wikipedia: None,
             country_code: Some("CR".into()),
         }
     }

@@ -7,7 +7,7 @@
 | Routage marche/vélo/voiture | Valhalla auto-hébergé (MIT), extrait OSM Costa Rica. Repli à vol d'oiseau derrière le trait `RoutingProvider`. |
 | Transports en commun | Pas de GTFS exploitable au Costa Rica, Navitia ne le couvre pas : approximation (temps voiture × 1,8 + 15 min) clairement signalée « estimation ». |
 | Recherche de lieux | Nominatim public via le backend (cache, 1 req/s, User-Agent identifié, pas d'autocomplétion). Auto-hébergement prévu avant production. |
-| Détails POI | Tags OSM fournis par Nominatim (`extratags` : `opening_hours`, `website`), interprétés avec la crate `opening-hours`. Overpass n'apporte rien de plus pour le MVP (révisé à l'incrément 3). |
+| Détails POI | Tags OSM fournis par Nominatim (`extratags` : `opening_hours`, `website`, `phone`, `email`, `wikidata`, `wikipedia`), horaires interprétés avec la crate `opening-hours`. Overpass n'apporte rien de plus pour le MVP (révisé à l'incrément 3). |
 | Fond de carte | OpenFreeMap (tuiles vectorielles, sans clé). |
 | Authentification | Mot de passe (Argon2id) + lien magique (SMTP, Mailpit en dev). Sessions en base, cookie HttpOnly. |
 | Invités | Le lien d'invitation demande prénom + email : compte sans mot de passe créé et connecté immédiatement. |
@@ -95,6 +95,12 @@
 - **Ajout par clic** : géocodage inverse au point cliqué ; on garde les coordonnées du clic. Si
   OSM y connaît un lieu nommé (hors rue / commune), nom, catégorie et horaires sont préremplis ;
   sinon seule l'adresse l'est.
+- **Coordonnées et liens** (migration 0009) : téléphone, email, identifiant Wikidata et article
+  Wikipédia (`langue:Titre`) repris des tags OSM à l'ajout (première valeur si plusieurs, valeur
+  invalide ignorée), modifiables via l'API ; téléphone et email aussi dans le formulaire. La fiche
+  d'un lieu affiche à tous les membres un bloc « Liens » construit côté interface
+  (`lib/links.ts`) : site officiel, appel, email, Wikipédia, fiche OpenStreetMap, recherche et
+  itinéraire Google Maps (nom + adresse, sinon coordonnées). Aucun appel tant qu'on ne clique pas.
 - **RGPD** : l'export inclut les lieux ajoutés ; à la suppression du compte, ils restent dans les
   voyages sans auteur.
 - **Carte** : le worker MapLibre est fourni explicitement (`setWorkerUrl` + import `?url`), sinon

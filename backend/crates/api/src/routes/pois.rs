@@ -39,12 +39,19 @@ pub struct CreatePoi {
     pub opening_hours: Option<String>,
     pub country_code: Option<String>,
     pub website: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    /// Identifiant Wikidata (ex. `Q190622`).
+    pub wikidata: Option<String>,
+    /// Article Wikipédia au format OSM `langue:Titre`.
+    pub wikipedia: Option<String>,
     pub notes: Option<String>,
     /// Objet OSM d'origine (un même lieu n'est ajouté qu'une fois par voyage).
     pub osm: Option<OsmRef>,
 }
 
-/// Modification partielle ; une chaîne vide efface `opening_hours` ou `website`.
+/// Modification partielle ; une chaîne vide efface un champ facultatif (horaires, site web,
+/// téléphone, email, références Wikidata et Wikipédia).
 #[derive(Deserialize, ToSchema)]
 pub struct UpdatePoi {
     pub version: i64,
@@ -56,6 +63,10 @@ pub struct UpdatePoi {
     pub duration_min: Option<i32>,
     pub opening_hours: Option<String>,
     pub website: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub wikidata: Option<String>,
+    pub wikipedia: Option<String>,
     pub notes: Option<String>,
 }
 
@@ -116,6 +127,10 @@ async fn create_poi(
     let opening_hours = opening::normalize(req.opening_hours.as_deref())?;
     let country_code = validate::country_code(req.country_code.as_deref())?;
     let website = validate::website(req.website.as_deref())?;
+    let phone = validate::phone(req.phone.as_deref())?;
+    let email = validate::contact_email(req.email.as_deref())?;
+    let wikidata = validate::wikidata(req.wikidata.as_deref())?;
+    let wikipedia = validate::wikipedia(req.wikipedia.as_deref())?;
     if req.osm.is_some_and(|o| o.id <= 0) {
         return Err(AppError::BadRequest("identifiant OSM invalide".into()));
     }
@@ -138,9 +153,10 @@ async fn create_poi(
     }
     let poi_id: Uuid = sqlx::query_scalar(
         "INSERT INTO pois (trip_id, name, category, location, address, duration_min,
-                           opening_hours, country_code, website, notes, osm_type, osm_id, created_by)
+                           opening_hours, country_code, website, notes, osm_type, osm_id, created_by,
+                           phone, email, wikidata, wikipedia)
          VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, $6, $7,
-                 $8, $9, $10, $11, $12, $13, $14)
+                 $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
          RETURNING id",
     )
     .bind(trip_id)
@@ -157,6 +173,10 @@ async fn create_poi(
     .bind(req.osm.map(|o| o.osm_type.as_str()))
     .bind(req.osm.map(|o| o.id))
     .bind(current.user.id)
+    .bind(&phone)
+    .bind(&email)
+    .bind(&wikidata)
+    .bind(&wikipedia)
     .fetch_one(&mut *tx)
     .await
     .map_err(pois::map_duplicate)?;
@@ -226,6 +246,22 @@ async fn update_poi(
         Some(w) => validate::website(Some(&w))?,
         None => cur.website,
     };
+    let phone = match req.phone {
+        Some(v) => validate::phone(Some(&v))?,
+        None => cur.phone,
+    };
+    let email = match req.email {
+        Some(v) => validate::contact_email(Some(&v))?,
+        None => cur.email,
+    };
+    let wikidata = match req.wikidata {
+        Some(v) => validate::wikidata(Some(&v))?,
+        None => cur.wikidata,
+    };
+    let wikipedia = match req.wikipedia {
+        Some(v) => validate::wikipedia(Some(&v))?,
+        None => cur.wikipedia,
+    };
     let notes = match req.notes {
         Some(n) => validate::notes(&n)?,
         None => cur.notes,
@@ -235,7 +271,7 @@ async fn update_poi(
         "UPDATE pois SET name = $4, category = $5,
              location = ST_SetSRID(ST_MakePoint($6, $7), 4326)::geography,
              address = $8, duration_min = $9, opening_hours = $10, website = $11, notes = $12,
-             version = version + 1
+             phone = $13, email = $14, wikidata = $15, wikipedia = $16, version = version + 1
          WHERE id = $1 AND trip_id = $2 AND version = $3",
     )
     .bind(poi_id)
@@ -250,6 +286,10 @@ async fn update_poi(
     .bind(&opening_hours)
     .bind(&website)
     .bind(&notes)
+    .bind(&phone)
+    .bind(&email)
+    .bind(&wikidata)
+    .bind(&wikipedia)
     .execute(&state.db)
     .await?;
     if updated.rows_affected() == 0 {

@@ -230,6 +230,10 @@ pub fn sample_places() -> Vec<Place> {
             }),
             opening_hours: Some("Tu-Sa 08:30-16:30; Su 09:00-16:30".into()),
             website: Some("https://www.museocostarica.go.cr".into()),
+            phone: Some("+506 2257 1433".into()),
+            email: None,
+            wikidata: Some("Q2638513".into()),
+            wikipedia: Some("es:Museo Nacional de Costa Rica".into()),
             country_code: Some("CR".into()),
         },
         Place {
@@ -245,6 +249,10 @@ pub fn sample_places() -> Vec<Place> {
             }),
             opening_hours: None,
             website: None,
+            phone: None,
+            email: None,
+            wikidata: None,
+            wikipedia: None,
             country_code: Some("CR".into()),
         },
     ]

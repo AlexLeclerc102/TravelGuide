@@ -32,6 +32,12 @@ pub struct Poi {
     pub closed_dates: Vec<Date>,
     pub country_code: Option<String>,
     pub website: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    /// Identifiant Wikidata (ex. `Q190622`).
+    pub wikidata: Option<String>,
+    /// Article Wikipédia au format OSM `langue:Titre`.
+    pub wikipedia: Option<String>,
     pub notes: String,
     pub osm: Option<OsmRef>,
     /// Notes du groupe.
@@ -91,6 +97,10 @@ struct PoiRow {
     opening_hours: Option<String>,
     country_code: Option<String>,
     website: Option<String>,
+    phone: Option<String>,
+    email: Option<String>,
+    wikidata: Option<String>,
+    wikipedia: Option<String>,
     notes: String,
     osm_type: Option<String>,
     osm_id: Option<i64>,
@@ -132,6 +142,10 @@ impl PoiRow {
             closed_dates,
             country_code: self.country_code,
             website: self.website,
+            phone: self.phone,
+            email: self.email,
+            wikidata: self.wikidata,
+            wikipedia: self.wikipedia,
             notes: self.notes,
             osm,
             rating: planner::ratings::summarize(&to_u8(&self.ratings)).into(),
@@ -157,7 +171,8 @@ fn to_u8(ratings: &[i16]) -> Vec<u8> {
 const POI_SELECT: &str = "
     SELECT p.id, p.trip_id, p.name, p.category,
            ST_Y(p.location::geometry) AS lat, ST_X(p.location::geometry) AS lon,
-           p.address, p.duration_min, p.opening_hours, p.country_code, p.website, p.notes,
+           p.address, p.duration_min, p.opening_hours, p.country_code, p.website,
+           p.phone, p.email, p.wikidata, p.wikipedia, p.notes,
            p.osm_type, p.osm_id,
            COALESCE((SELECT array_agg(r.rating) FROM reviews r WHERE r.poi_id = p.id), '{}')
                AS ratings,

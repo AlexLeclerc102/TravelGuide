@@ -39,6 +39,10 @@ const arenal: Place = {
   osm: { type: 'node', id: 276216895 },
   opening_hours: null,
   website: null,
+  phone: null,
+  email: null,
+  wikidata: null,
+  wikipedia: null,
   country_code: 'CR',
 }
 
@@ -56,6 +60,10 @@ const museum: Poi = {
   closed_dates: ['2026-12-07'],
   country_code: 'CR',
   website: null,
+  phone: null,
+  email: null,
+  wikidata: null,
+  wikipedia: null,
   notes: '',
   osm: { type: 'relation', id: 4144800 },
   rating: { count: 0, average: null, min: null, max: null, disagreement: false },
@@ -141,6 +149,29 @@ describe('lieux', () => {
     // Le point cliqué est conservé, pas celui du résultat OSM.
     expect(created).toMatchObject({ lat: 10.46, lon: -84.69, category: 'nature' })
     expect(String(api.mock.calls.find(([u]) => String(u).includes('reverse'))![0])).toContain('lat=10.460000')
+  })
+
+  it('chaque membre voit les liens du lieu, contacts et Wikipédia compris', async () => {
+    const linked: Poi = {
+      ...museum,
+      website: 'https://www.museocostarica.go.cr',
+      phone: '+506 2257 1433',
+      wikipedia: 'es:Museo Nacional de Costa Rica',
+    }
+    for (const role of ['editor', 'viewer']) {
+      mockApi(baseRoutes(role, [linked]))
+      const { unmount } = renderApp('/trips/trip-1')
+      fireEvent.click(await screen.findByRole('button', { name: /Museo Nacional/ }))
+      const links = await screen.findByRole('navigation', { name: 'Liens' })
+      const href = (name: RegExp) => within(links).getByRole('link', { name }).getAttribute('href')
+      expect(href(/Site officiel/)).toBe('https://www.museocostarica.go.cr')
+      expect(href(/\+506 2257 1433/)).toBe('tel:+50622571433')
+      expect(href(/Wikipédia/)).toBe('https://es.wikipedia.org/wiki/Museo_Nacional_de_Costa_Rica')
+      expect(href(/OpenStreetMap/)).toBe('https://www.openstreetmap.org/relation/4144800')
+      expect(href(/Itinéraire/)).toContain('destination=9.932700,-84.071600')
+      expect(within(links).queryByRole('link', { name: /Email/ })).not.toBeInTheDocument()
+      unmount()
+    }
   })
 
   it('un lecteur consulte les lieux sans pouvoir les modifier', async () => {

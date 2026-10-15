@@ -33,6 +33,10 @@ export interface Place {
   osm: OsmRef | null
   opening_hours: string | null
   website: string | null
+  phone: string | null
+  email: string | null
+  wikidata: string | null
+  wikipedia: string | null
   country_code: string | null
 }
 
@@ -74,6 +78,12 @@ export interface Poi {
   closed_dates: string[]
   country_code: string | null
   website: string | null
+  phone: string | null
+  email: string | null
+  /** Identifiant Wikidata (ex. `Q190622`). */
+  wikidata: string | null
+  /** Article Wikipédia au format OSM `langue:Titre`. */
+  wikipedia: string | null
   notes: string
   osm: OsmRef | null
   rating: GroupRating
@@ -95,6 +105,10 @@ export interface PoiInput {
   opening_hours?: string
   country_code?: string | null
   website?: string
+  phone?: string
+  email?: string
+  wikidata?: string
+  wikipedia?: string
   notes?: string
   osm?: OsmRef | null
 }
@@ -142,6 +156,10 @@ export function placeToInput(place: Place, name = place.name): PoiInput {
     opening_hours: place.opening_hours ?? undefined,
     country_code: place.country_code,
     website: place.website ?? undefined,
+    phone: place.phone ?? undefined,
+    email: place.email ?? undefined,
+    wikidata: place.wikidata ?? undefined,
+    wikipedia: place.wikipedia ?? undefined,
     osm: place.osm,
   }
 }

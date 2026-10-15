@@ -184,6 +184,10 @@ async fn invalid_input_is_rejected(db: PgPool) {
         ("duration_min", json!(-5)),
         ("website", json!("javascript:alert(1)")),
         ("country_code", json!("CRI")),
+        ("phone", json!("tel:2257")),
+        ("email", json!("museo")),
+        ("wikidata", json!("190622")),
+        ("wikipedia", json!("Volcán Arenal")),
         ("notes", json!("x".repeat(2001))),
         ("opening_hours", json!("x".repeat(501))),
         ("osm", json!({ "type": "node", "id": -1 })),
@@ -266,10 +270,18 @@ async fn update_uses_optimistic_locking_and_clears_fields(db: PgPool) {
     let (orga, editor, _, trip) = setup(&app).await;
     let mut body = museum();
     body["website"] = json!("https://example.cr");
+    body["phone"] = json!("+506 2257 1433");
+    body["email"] = json!("Info@Museo.cr");
+    body["wikidata"] = json!("Q2638513");
+    body["wikipedia"] = json!("es:Museo Nacional de Costa Rica");
     let created = app
         .post(&format!("/api/v1/trips/{trip}/pois"), body, Some(&orga))
         .await
         .body;
+    assert_eq!(created["phone"], "+506 2257 1433");
+    assert_eq!(created["email"], "info@museo.cr");
+    assert_eq!(created["wikidata"], "Q2638513");
+    assert_eq!(created["wikipedia"], "es:Museo Nacional de Costa Rica");
     let uri = format!(
         "/api/v1/trips/{trip}/pois/{}",
         created["id"].as_str().unwrap()
@@ -279,7 +291,7 @@ async fn update_uses_optimistic_locking_and_clears_fields(db: PgPool) {
         .patch(
             &uri,
             json!({ "version": 1, "duration_min": 120, "lat": 10.0, "lon": -84.2,
-                    "opening_hours": "", "website": "", "notes": "Gratuit le dimanche" }),
+                    "opening_hours": "", "website": "", "phone": "", "notes": "Gratuit le dimanche" }),
             Some(&editor),
         )
         .await;
@@ -290,6 +302,8 @@ async fn update_uses_optimistic_locking_and_clears_fields(db: PgPool) {
     assert_eq!(res.body["opening_hours"], Value::Null);
     assert_eq!(res.body["opening_hours_status"], "none");
     assert_eq!(res.body["website"], Value::Null);
+    assert_eq!(res.body["phone"], Value::Null);
+    assert_eq!(res.body["wikipedia"], "es:Museo Nacional de Costa Rica"); // inchangé
     assert_eq!(res.body["notes"], "Gratuit le dimanche");
     assert_eq!(res.body["name"], "Museo Nacional"); // inchangé
 

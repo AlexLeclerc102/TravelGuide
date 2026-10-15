@@ -14,6 +14,7 @@ use serde::Deserialize;
 use tokio::time::Instant;
 
 use super::{Category, OsmRef, OsmType, Place, PlaceError, PlaceProvider, Viewbox};
+use crate::validate;
 
 /// Intervalle minimal entre deux requêtes (toutes requêtes confondues).
 const MIN_INTERVAL: Duration = Duration::from_secs(1);
@@ -143,11 +144,21 @@ impl Item {
             (Some(osm_type), Some(id)) if id > 0 => Some(OsmRef { osm_type, id }),
             _ => None,
         };
-        let website = extratags
-            .get("website")
-            .or_else(|| extratags.get("contact:website"))
-            .filter(|w| w.starts_with("https://") || w.starts_with("http://"))
-            .cloned();
+        // Premier tag présent parmi `keys` ; une valeur invalide est ignorée.
+        let tag = |keys: &[&str], check: fn(Option<&str>) -> Result<Option<String>, _>| {
+            let value = keys.iter().find_map(|k| extratags.get(*k))?;
+            // OSM sépare plusieurs valeurs par `;` : on garde la première.
+            let first = value.split(';').next().unwrap_or_default();
+            check(Some(first)).ok().flatten()
+        };
+        let website = tag(&["website", "contact:website"], validate::website);
+        let phone = tag(
+            &["phone", "contact:phone", "contact:mobile"],
+            validate::phone,
+        );
+        let email = tag(&["email", "contact:email"], validate::contact_email);
+        let wikidata = tag(&["wikidata"], validate::wikidata);
+        let wikipedia = tag(&["wikipedia"], validate::wikipedia);
         Ok(Place {
             name: self.name,
             display_name: self.display_name,
@@ -158,6 +169,10 @@ impl Item {
             osm,
             opening_hours: extratags.get("opening_hours").cloned(),
             website,
+            phone,
+            email,
+            wikidata,
+            wikipedia,
             country_code: self
                 .address
                 .get("country_code")
@@ -187,14 +202,15 @@ fn parse_reverse(body: &str) -> anyhow::Result<Option<Place>> {
 mod tests {
     use super::*;
 
-    // Extrait d'une réponse réelle (Musée national, San José).
+    // D'après une réponse réelle (Musée national, San José), tags de contact complétés.
     const SEARCH: &str = r#"[{"place_id":1,"osm_type":"relation","osm_id":4144800,
         "lat":"9.9327","lon":"-84.0716","category":"tourism","type":"museum",
         "name":"Museo Nacional de Costa Rica",
         "display_name":"Museo Nacional de Costa Rica, San José, Costa Rica",
         "address":{"city":"San José","country":"Costa Rica","country_code":"cr"},
-        "extratags":{"phone":"+506 2257 1433","opening_hours":"Tu-Sa 08:30-16:30; Su 09:00-16:30",
-                     "website":"https://www.museocostarica.go.cr"}},
+        "extratags":{"phone":"+506 2257 1433;+506 2257 1434","opening_hours":"Tu-Sa 08:30-16:30; Su 09:00-16:30",
+                     "website":"https://www.museocostarica.go.cr","contact:email":"info@museocostarica.go.cr",
+                     "wikidata":"Q2638513","wikipedia":"es:Museo Nacional de Costa Rica"}},
         {"place_id":2,"osm_type":"node","osm_id":276216895,"lat":"10.4620845","lon":"-84.7034096",
          "category":"natural","type":"volcano","name":"Volcán Arenal","display_name":"Volcán Arenal",
          "address":{"country_code":"cr"},"extratags":null}]"#;
@@ -219,6 +235,14 @@ mod tests {
             Some("Tu-Sa 08:30-16:30; Su 09:00-16:30")
         );
         assert_eq!(m.country_code.as_deref(), Some("CR"));
+        assert_eq!(m.phone.as_deref(), Some("+506 2257 1433"));
+        assert_eq!(m.email.as_deref(), Some("info@museocostarica.go.cr"));
+        assert_eq!(m.wikidata.as_deref(), Some("Q2638513"));
+        assert_eq!(
+            m.wikipedia.as_deref(),
+            Some("es:Museo Nacional de Costa Rica")
+        );
+        assert_eq!(places[1].phone, None);
         assert!((m.lat - 9.9327).abs() < 1e-9);
         assert_eq!(places[1].category, Category::Nature);
         assert_eq!(places[1].opening_hours, None);

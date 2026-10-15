@@ -15,6 +15,7 @@ import type { Trip } from '../../api/trips'
 import { t } from '../../i18n/fr'
 import { formatDate, formatRating } from '../../lib/format'
 import { PoiDetails, PoiEditor } from './PoiEditor'
+import { PoiLinks } from './PoiLinks'
 import { ReviewsSection } from './ReviewsSection'
 
 export type Selection = { kind: 'poi'; id: string } | { kind: 'draft'; draft: PoiInput } | null
@@ -96,6 +97,7 @@ export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeCh
               ×
             </button>
           </div>
+          <PoiLinks poi={selectedPoi} />
           {/* Noter est plus fréquent que modifier : les avis d'abord, la modification repliée. */}
           <ReviewsSection key={selectedPoi.id} tripId={trip.id} poi={selectedPoi} />
           {canEdit ? (

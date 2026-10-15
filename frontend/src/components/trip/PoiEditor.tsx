@@ -31,6 +31,8 @@ interface Form {
   address: string
   opening_hours: string
   website: string
+  phone: string
+  email: string
   notes: string
 }
 
@@ -41,6 +43,8 @@ const toForm = (v: PoiInput | Poi): Form => ({
   address: v.address ?? '',
   opening_hours: v.opening_hours ?? '',
   website: v.website ?? '',
+  phone: v.phone ?? '',
+  email: v.email ?? '',
   notes: v.notes ?? '',
 })
 
@@ -82,6 +86,8 @@ export function PoiEditor({ tripId, poi, draft, onSaved, onClose }: Props) {
       address: form.address,
       opening_hours: form.opening_hours,
       website: form.website,
+      phone: form.phone,
+      email: form.email,
       notes: form.notes,
     }
     if (poi) {
@@ -138,6 +144,16 @@ export function PoiEditor({ tripId, poi, draft, onSaved, onClose }: Props) {
         {t.pois.website}
         <input type="url" value={form.website} onChange={set('website')} maxLength={500} placeholder="https://" />
       </label>
+      <div className="row">
+        <label>
+          {t.pois.phone}
+          <input type="tel" value={form.phone} onChange={set('phone')} maxLength={50} placeholder="+506 …" />
+        </label>
+        <label>
+          {t.pois.email}
+          <input type="email" value={form.email} onChange={set('email')} maxLength={254} />
+        </label>
+      </div>
       <label>
         {t.pois.notes}
         <textarea value={form.notes} onChange={set('notes')} maxLength={2000} rows={2} />
@@ -183,13 +199,6 @@ export function PoiDetails({ tripId, poi }: { tripId: string; poi: Poi }) {
         </>
       ) : (
         <p className="muted small">{t.pois.hoursUnknown}</p>
-      )}
-      {poi.website && (
-        <p className="small">
-          <a href={poi.website} target="_blank" rel="noopener noreferrer nofollow">
-            {poi.website}
-          </a>
-        </p>
       )}
       {poi.notes && <p className="small pre-line">{poi.notes}</p>}
     </div>

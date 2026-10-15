@@ -173,6 +173,66 @@ pub fn website(raw: Option<&str>) -> Result<Option<String>, AppError> {
     }
 }
 
+/// Téléphone d'un lieu : chiffres et séparateurs usuels (`+`, espace, `-`, `.`, `/`,
+/// parenthèses) ; vide => aucun.
+pub fn phone(raw: Option<&str>) -> Result<Option<String>, AppError> {
+    let Some(v) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    let ok = v.len() <= 50
+        && v.chars().filter(char::is_ascii_digit).count() >= 3
+        && v.chars()
+            .all(|c| c.is_ascii_digit() || "+ -./()".contains(c));
+    if ok {
+        Ok(Some(v.to_owned()))
+    } else {
+        Err(AppError::BadRequest("numéro de téléphone invalide".into()))
+    }
+}
+
+/// Email de contact d'un lieu ; vide => aucun.
+pub fn contact_email(raw: Option<&str>) -> Result<Option<String>, AppError> {
+    match raw.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(v) => email(v).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// Identifiant Wikidata (`Q` suivi d'un nombre) ; vide => aucun.
+pub fn wikidata(raw: Option<&str>) -> Result<Option<String>, AppError> {
+    let Some(v) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    let ok = matches!(v.strip_prefix('Q'), Some(n)
+        if (1..=12).contains(&n.len()) && !n.starts_with('0')
+           && n.chars().all(|c| c.is_ascii_digit()));
+    if ok {
+        Ok(Some(v.to_owned()))
+    } else {
+        Err(AppError::BadRequest("identifiant Wikidata invalide".into()))
+    }
+}
+
+/// Article Wikipédia au format OSM `langue:Titre` (ex. `es:Volcán Arenal`) ; vide => aucun.
+pub fn wikipedia(raw: Option<&str>) -> Result<Option<String>, AppError> {
+    let Some(v) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    let ok = matches!(v.split_once(':'), Some((lang, title))
+        if (2..=12).contains(&lang.len())
+           && lang.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+           && !title.trim().is_empty() && !title.starts_with('/')
+           && title.chars().count() <= 250
+           && !title.chars().any(char::is_control));
+    if ok {
+        Ok(Some(v.to_owned()))
+    } else {
+        Err(AppError::BadRequest(
+            "article Wikipédia invalide (format langue:Titre)".into(),
+        ))
+    }
+}
+
 /// Code pays ISO à deux lettres, mis en majuscules ; vide => aucun.
 pub fn country_code(raw: Option<&str>) -> Result<Option<String>, AppError> {
     let Some(v) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
@@ -226,6 +286,47 @@ mod tests {
         assert_eq!(country_code(Some("cr")).unwrap().as_deref(), Some("CR"));
         assert!(country_code(Some("CRI")).is_err());
         assert!(country_code(Some("1A")).is_err());
+    }
+
+    #[test]
+    fn contact_and_references() {
+        assert_eq!(phone(Some(" ")).unwrap(), None);
+        assert_eq!(
+            phone(Some("+506 2257-1433")).unwrap().as_deref(),
+            Some("+506 2257-1433")
+        );
+        for bad in [
+            "12",
+            "+506 2257 1433; +506 8888 8888",
+            "tel:2257",
+            &"1".repeat(51),
+        ] {
+            assert!(phone(Some(bad)).is_err(), "{bad}");
+        }
+        assert_eq!(
+            contact_email(Some(" Info@Museo.CR ")).unwrap().as_deref(),
+            Some("info@museo.cr")
+        );
+        assert!(contact_email(Some("museo")).is_err());
+        assert_eq!(
+            wikidata(Some("Q190622")).unwrap().as_deref(),
+            Some("Q190622")
+        );
+        for bad in ["Q", "Q0", "Q01", "190622", "Q12a", "q190622"] {
+            assert!(wikidata(Some(bad)).is_err(), "{bad}");
+        }
+        assert_eq!(
+            wikipedia(Some("es:Volcán Arenal")).unwrap().as_deref(),
+            Some("es:Volcán Arenal")
+        );
+        for bad in [
+            "Volcán Arenal",
+            "es:",
+            "https://es.wikipedia.org/wiki/Arenal",
+            "ES:Arenal",
+        ] {
+            assert!(wikipedia(Some(bad)).is_err(), "{bad}");
+        }
     }
 
     #[test]
