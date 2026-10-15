@@ -7,6 +7,7 @@ import { DEFAULT_DURATION, placeToInput, reverseGeocode, usePois, type Bounds, t
 import { useDeleteTrip, useRemoveMember, useTrip, useUpdateTrip, type Trip } from '../api/trips'
 import { MapView } from '../components/MapView'
 import { InvitationsPanel } from '../components/trip/InvitationsPanel'
+import { ItineraryPanel } from '../components/trip/ItineraryPanel'
 import { MembersPanel } from '../components/trip/MembersPanel'
 import { PoiPanel, type Selection } from '../components/trip/PoiPanel'
 import { TransportPanel } from '../components/trip/TransportPanel'
@@ -14,7 +15,7 @@ import { TripForm } from '../components/trip/TripForm'
 import { t } from '../i18n/fr'
 import { dayCount, formatDateRange } from '../lib/format'
 
-type Tab = 'places' | 'transport' | 'members' | 'settings'
+type Tab = 'places' | 'itinerary' | 'transport' | 'members' | 'settings'
 
 export function TripPage() {
   const { tripId = '' } = useParams()
@@ -95,7 +96,7 @@ function TripView({ trip }: { trip: Trip }) {
           </p>
         </header>
         <div className="tabs" role="tablist">
-          {(['places', 'transport', 'members', 'settings'] as Tab[]).map((k) => (
+          {(['places', 'itinerary', 'transport', 'members', 'settings'] as Tab[]).map((k) => (
             <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>
               {t.tabs[k]}
             </button>
@@ -115,6 +116,17 @@ function TripView({ trip }: { trip: Trip }) {
             locating={locating}
             locateError={locateError}
             bounds={bounds}
+          />
+        )}
+        {tab === 'itinerary' && (
+          <ItineraryPanel
+            trip={trip}
+            pois={pois}
+            onRouteChange={setRoute}
+            onSelectPoi={(id) => {
+              setTab('places')
+              setSelection({ kind: 'poi', id })
+            }}
           />
         )}
         {tab === 'transport' && <TransportPanel trip={trip} pois={pois} onRouteChange={setRoute} />}

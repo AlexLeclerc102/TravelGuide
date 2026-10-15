@@ -68,6 +68,7 @@ export const tripKeys = {
   invitations: (id: string) => ['trips', id, 'invitations'] as const,
   days: (id: string) => ['trips', id, 'days'] as const,
   routes: (id: string) => ['trips', id, 'route'] as const,
+  itinerary: (id: string) => ['trips', id, 'itinerary'] as const,
 }
 
 export const useTrips = () =>
@@ -98,6 +99,7 @@ export function useUpdateTrip(id: string) {
       // Dates ou modes par défaut modifiés : les jours changent.
       qc.invalidateQueries({ queryKey: tripKeys.days(id) })
       qc.invalidateQueries({ queryKey: tripKeys.routes(id) })
+      qc.invalidateQueries({ queryKey: tripKeys.itinerary(id) })
     },
     // Conflit de version : on recharge la version à jour.
     onError: () => qc.invalidateQueries({ queryKey: tripKeys.one(id) }),

@@ -5,5 +5,6 @@
 //! itinéraire de façon déterministe. Elle est testée unitairement.
 
 pub mod geo;
+pub mod itinerary;
 pub mod ratings;
 pub mod travel;

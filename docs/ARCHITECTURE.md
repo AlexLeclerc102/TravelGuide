@@ -123,8 +123,9 @@
 
 - **Modes par jour** (`trip_days`) : une ligne n'existe que si le jour s'écarte du voyage. `modes`
   NULL = modes par défaut du voyage (`modes_inherited`), sinon liste propre au jour ; `base_poi_id`
-  = hébergement (départ et arrivée de la journée, n'importe quel lieu du voyage), remis à NULL si
-  le lieu est supprimé. Réglages des jours sortis des dates supprimés quand le voyage raccourcit.
+  = hébergement du soir (n'importe quel lieu du voyage), remis à NULL si le lieu est supprimé.
+  Révisé à l'incrément 6 : la journée part de l'hébergement de la veille (sinon de celui du jour)
+  et se termine à celui du jour, ce qui gère les changements d'hôtel. Réglages des jours sortis des dates supprimés quand le voyage raccourcit.
 - **Droits** : lecture pour tous les membres ; jours modifiables par les éditeurs (dernière
   écriture gagnante, `PUT /trips/{t}/days/{date}` remplace tout) ; modes par défaut du voyage
   réservés à l'organisateur (paramètres). Calcul de trajets ouvert aux lecteurs (lecture seule).
@@ -147,3 +148,39 @@
   option, l'option retenue, son tracé GeoJSON et `has_estimates`). 60 calculs / min par utilisateur.
 - **Interface** : onglet « Transports » (modes et hébergement de chaque jour, comparaison d'un
   trajet entre deux lieux, tracé retenu affiché sur la carte, estimations marquées « ≈ »).
+
+## Itinéraire (incrément 6)
+
+- **Algorithme** (`planner::itinerary`, pur et déterministe, testé unitairement) en deux temps :
+  1. *Répartition par jour* (vol d'oiseau, sans moteur de routage) : centres fixés par les
+     hébergements du soir, les autres par point le plus éloigné puis k-moyennes (20 itérations
+     max.). Les lieux sont placés par **note du groupe décroissante** (note neutre 3 sans avis),
+     puis durée croissante, dans le jour ouvert le plus proche qui a encore le temps (visite +
+     trajet estimé depuis le centre × 1,2). À distance égale (même hôtel plusieurs nuits), le
+     jour le plus libre l'emporte. Le budget d'un jour de changement d'hôtel déduit le transfert
+     estimé. Les jours sans hébergement sont ensuite réordonnés pour suivre la géographie.
+  2. *Journée* (vrais temps de trajet, mode choisi par paire avec la règle de l'incrément 5) :
+     insertion des lieux les mieux notés d'abord, à la position qui termine la journée le plus
+     tôt en respectant les **horaires d'ouverture** (attente si on arrive avant l'ouverture, la
+     visite doit finir avant la fermeture) et la **plage de la journée** (retour à l'hôtel
+     compris), puis amélioration **2-opt** du temps de trajet total.
+- **Lieux exclus** : hébergements (catégorie ou hébergement d'un jour). Horaires absents ou
+  invalides : lieu considéré ouvert. Raisons d'exclusion : `closed_all_days`, `opening_hours`,
+  `no_time` (les mieux notés passent d'abord), `added_after` (calculée à la lecture).
+- **Stockage** : `itineraries` (version, auteur, date), `itinerary_days` (modes, hébergements,
+  plage horaire, nombre d'étapes et instant du calcul, trajet de retour), `itinerary_stops`
+  (ordre, horaires en secondes, trajet d'arrivée, `locked` pour l'incrément 7),
+  `itinerary_unscheduled`. Régénérer remplace tout (verrou sur le voyage).
+- **Itinéraire périmé** (calculé à la lecture, rien n'est modifié en base) : un jour est
+  `stale` si ses modes, ses hébergements ou la plage horaire ont changé, si une étape a disparu
+  (lieu supprimé) ou si un lieu de la journée a été modifié depuis le calcul ; jours ajoutés
+  au voyage vides et périmés.
+- **API** : `GET /trips/{t}/itinerary` (membres, `null` si jamais généré), `POST
+  /trips/{t}/itinerary` (éditeurs, 10 / min par utilisateur). L'auteur (`generated_by`) passe
+  à NULL à la suppression du compte.
+- **Interface** : onglet « Itinéraire » (frise de chaque jour avec trajets, attentes et
+  estimations, lieux hors itinéraire avec la raison, tracé du jour choisi sur la carte, avertissement
+  si l'itinéraire est périmé, confirmation avant de régénérer).
+- **Limites connues** : pas de pause repas ; un lieu écarté d'un jour faute de temps n'est pas
+  retenté sur un autre jour (ajustement manuel à l'incrément 7) ; les lieux hors réseau routier
+  (sommet d'un volcan) sont rejoints au point routier le plus proche.

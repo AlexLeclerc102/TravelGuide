@@ -155,7 +155,11 @@ export function useCreatePoi(tripId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (input: PoiInput) => apiFetch<Poi>(`/trips/${tripId}/pois`, json('POST', input)),
-    onSuccess: (poi) => qc.setQueryData<Poi[]>(poiKeys.list(tripId), (list) => [...(list ?? []), poi]),
+    onSuccess: (poi) => {
+      qc.setQueryData<Poi[]>(poiKeys.list(tripId), (list) => [...(list ?? []), poi])
+      // L'itinéraire signale les lieux ajoutés depuis sa génération.
+      qc.invalidateQueries({ queryKey: tripKeys.itinerary(tripId) })
+    },
   })
 }
 
@@ -168,6 +172,7 @@ export function useUpdatePoi(tripId: string) {
       qc.setQueryData<Poi[]>(poiKeys.list(tripId), (list) => list?.map((p) => (p.id === poi.id ? poi : p)))
       // Le lieu a pu être déplacé : les trajets sont à recalculer.
       qc.invalidateQueries({ queryKey: tripKeys.routes(tripId) })
+      qc.invalidateQueries({ queryKey: tripKeys.itinerary(tripId) })
     },
     // Conflit de version : on recharge la liste à jour.
     onError: () => qc.invalidateQueries({ queryKey: poiKeys.list(tripId) }),
@@ -182,6 +187,7 @@ export function useDeletePoi(tripId: string) {
       qc.setQueryData<Poi[]>(poiKeys.list(tripId), (list) => list?.filter((p) => p.id !== id))
       // Un hébergement supprimé disparaît des jours où il servait de départ.
       qc.invalidateQueries({ queryKey: tripKeys.days(tripId) })
+      qc.invalidateQueries({ queryKey: tripKeys.itinerary(tripId) })
     },
   })
 }

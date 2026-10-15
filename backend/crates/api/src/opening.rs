@@ -149,6 +149,28 @@ pub fn day_schedule(oh: &OpeningHours, date: Date) -> DaySchedule {
     }
 }
 
+/// Plages d'ouverture d'une date, en secondes depuis minuit (fin à 86 400 pour minuit),
+/// fusionnées quand elles se touchent. Les plages incertaines comptent comme ouvertes.
+/// Vide : fermé toute la journée.
+pub fn day_windows(oh: &OpeningHours, date: Date) -> Vec<(u32, u32)> {
+    let from = to_naive(date).and_time(NaiveTime::MIN);
+    let to = from + chrono::Duration::days(1);
+    let secs = |dt: NaiveDateTime| (dt - from).num_seconds().clamp(0, 86_400) as u32;
+    let mut windows: Vec<(u32, u32)> = Vec::new();
+    for r in oh
+        .iter_range(from, to)
+        .filter(|r| matches!(r.kind, RuleKind::Open | RuleKind::Unknown))
+    {
+        let (start, end) = (secs(r.range.start), secs(r.range.end));
+        match windows.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ if end > start => windows.push((start, end)),
+            _ => {}
+        }
+    }
+    windows
+}
+
 /// Horaires de chaque date de `start` à `end` incluses.
 pub fn schedule(oh: &OpeningHours, start: Date, end: Date) -> Vec<DaySchedule> {
     let mut out = Vec::new();
@@ -183,6 +205,24 @@ mod tests {
             Parsed::Invalid(e) => panic!("{raw} : {e}"),
             Parsed::None => unreachable!(),
         }
+    }
+
+    #[test]
+    fn windows_in_seconds() {
+        let oh = valid(
+            "Mo-Fr 08:30-12:00,12:00-16:30; Sa 10:00-24:00; Su off",
+            None,
+        );
+        // Lundi 7 décembre 2026 : deux plages contiguës fusionnées.
+        assert_eq!(
+            day_windows(&oh, date!(2026 - 12 - 07)),
+            vec![(30_600, 59_400)]
+        );
+        assert_eq!(
+            day_windows(&oh, date!(2026 - 12 - 05)),
+            vec![(36_000, 86_400)]
+        );
+        assert!(day_windows(&oh, date!(2026 - 12 - 06)).is_empty());
     }
 
     #[test]

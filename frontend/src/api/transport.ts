@@ -66,8 +66,11 @@ export function useUpdateTripDay(tripId: string) {
   return useMutation({
     mutationFn: ({ date, ...input }: TripDayInput & { date: string }) =>
       apiFetch<TripDay>(`/trips/${tripId}/days/${date}`, json('PUT', input)),
-    onSuccess: (day) =>
-      qc.setQueryData<TripDay[]>(transportKeys.days(tripId), (list) => list?.map((d) => (d.date === day.date ? day : d))),
+    onSuccess: (day) => {
+      qc.setQueryData<TripDay[]>(transportKeys.days(tripId), (list) => list?.map((d) => (d.date === day.date ? day : d)))
+      // Modes ou hébergement changés : l'itinéraire de ce jour est à recalculer.
+      qc.invalidateQueries({ queryKey: tripKeys.itinerary(tripId) })
+    },
   })
 }
 

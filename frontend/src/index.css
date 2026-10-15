@@ -247,6 +247,26 @@ button.danger-outline { color: var(--error); border-color: var(--error); }
 /* Les noms de lieux longs dans les listes déroulantes ne doivent pas élargir la barre latérale. */
 .trip-sidebar > *, .poi-panel > *, .day-row { min-width: 0; }
 .route-compare select, .lodging-select select { width: 100%; max-width: 100%; text-overflow: ellipsis; }
-/* Quatre onglets : ils doivent tenir dans la barre latérale (420 px). */
-.tabs { flex-wrap: wrap; gap: 0.3rem; }
-.tabs button { padding: 0.35rem 0.55rem; font-size: 0.9rem; }
+/* Cinq onglets : ils doivent tenir sur une ligne dans la barre latérale (420 px). */
+.tabs { flex-wrap: wrap; gap: 0.25rem; }
+.tabs button { padding: 0.3rem 0.35rem; font-size: 0.85rem; }
+
+/* Itinéraire (incrément 6) */
+.itinerary-day { display: grid; gap: 0.3rem; }
+.itinerary-day.shown { border-color: var(--accent); }
+.day-title {
+  display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap;
+  border: none; background: none; padding: 0; text-align: left; color: inherit; cursor: pointer;
+}
+.timeline { list-style: none; margin: 0.3rem 0 0; padding: 0; display: grid; gap: 0.15rem; }
+.timeline li { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
+.timeline .time {
+  flex: none; width: 6.6rem; font-variant-numeric: tabular-nums; font-size: 0.85rem; color: var(--muted);
+}
+.timeline .stop .time { color: inherit; font-weight: 600; }
+.timeline .travel { border-left: 2px dotted var(--border); margin-left: 3rem; padding-left: 0.6rem; }
+.timeline .travel .time { display: none; }
+.timeline .lodging { font-size: 0.88rem; }
+.stop-name { margin-left: 0; text-align: left; }
+.unscheduled { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.3rem; }
+.unscheduled .link-button { margin-left: 0; }

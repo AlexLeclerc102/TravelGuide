@@ -79,6 +79,12 @@ export const fr = {
     car: 'Voiture',
     transit: 'Transports en commun',
   } as Record<string, string>,
+  modeIcons: {
+    walk: '🚶',
+    bike: '🚲',
+    car: '🚗',
+    transit: '🚌',
+  } as Record<string, string>,
   transitEstimate: 'Au Costa Rica, les temps en transports en commun sont des estimations.',
   trips: {
     title: 'Mes voyages',
@@ -155,6 +161,7 @@ export const fr = {
   tabs: {
     places: 'Lieux',
     transport: 'Transports',
+    itinerary: 'Itinéraire',
     members: 'Membres',
     settings: 'Paramètres',
   },
@@ -260,7 +267,7 @@ export const fr = {
     lodging: 'Hébergement',
     lodgingOf: (day: string) => `Hébergement du ${day}`,
     noLodging: 'Aucun',
-    lodgingHint: 'L’hébergement sert de point de départ et d’arrivée de la journée.',
+    lodgingHint: 'Hébergement du soir : la journée s’y termine et la suivante en part.',
     lodgingGroup: 'Hébergements',
     otherGroup: 'Autres lieux',
     compareTitle: 'Comparer un trajet',
@@ -284,6 +291,37 @@ export const fr = {
     transitNotice:
       'Transports en commun : aucun horaire exploitable au Costa Rica, temps estimé d’après la voiture (× 1,8 + 15 min d’attente).',
     attribution: 'Itinéraires © contributeurs OpenStreetMap, calculés avec Valhalla',
+  },
+  itinerary: {
+    title: 'Itinéraire',
+    none: 'Aucun itinéraire pour l’instant.',
+    intro:
+      'L’itinéraire répartit les lieux par jour selon leur position, les ordonne en privilégiant les mieux notés par le groupe, puis calcule les trajets en respectant les horaires d’ouverture et la plage de chaque journée.',
+    viewerHint: 'Un éditeur du voyage peut le générer.',
+    generate: 'Générer l’itinéraire',
+    regenerate: 'Régénérer',
+    regenerateConfirm: 'Remplacer l’itinéraire actuel par un nouveau calcul ?',
+    generating: 'Calcul de l’itinéraire…',
+    generated: (date: string, name: string | null) => `Généré le ${date}${name ? ` par ${name}` : ''}`,
+    stale: 'Des lieux ou des réglages ont changé depuis : régénérez pour en tenir compte.',
+    staleDay: 'à recalculer',
+    estimates: 'Certains trajets sont des estimations (≈) : vol d’oiseau ou transports en commun.',
+    showOnMap: (day: string) => `Afficher le ${day} sur la carte`,
+    summary: (stops: number, visits: string, travel: string, finish: string) =>
+      `${stops} étape${stops > 1 ? 's' : ''} · visites ${visits} · trajets ${travel} · fin ${finish}`,
+    freeDay: 'Journée libre : aucun lieu prévu.',
+    transferDay: 'Journée de transfert vers le nouvel hébergement, sans visite prévue.',
+    departure: 'Départ',
+    arrival: 'Arrivée',
+    wait: (d: string) => `attente ${d}`,
+    unscheduledTitle: (n: number) => `Hors itinéraire (${n})`,
+    reasons: {
+      closed_all_days: 'fermé à toutes les dates du voyage',
+      opening_hours: 'horaires incompatibles avec la journée prévue',
+      no_time: 'pas assez de temps (les lieux mieux notés passent d’abord)',
+      added_after: 'ajouté depuis la génération',
+    } as Record<string, string>,
+    lodgingNote: 'Les hébergements servent de départ et d’arrivée ; réglez-les dans l’onglet Transports.',
   },
   map: {
     unavailable:
