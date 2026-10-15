@@ -257,6 +257,7 @@ pub async fn suggest(
            AND ($4::text IS NULL OR o.category = $4)
            AND ($5 OR o.category <> 'lodging')
            AND ($4::text IS NOT NULL OR o.category <> 'food')
+           AND o.osm_tag NOT LIKE 'place=%'
            AND NOT EXISTS (SELECT 1 FROM pois p WHERE p.trip_id = $6
                            AND p.osm_type = o.osm_type AND p.osm_id = o.osm_id)
            AND NOT EXISTS (SELECT 1 FROM trip_dismissed_suggestions d WHERE d.trip_id = $6

@@ -178,6 +178,17 @@
 - **Zone d'hébergement** (migration 0010) : lieu `lodging` marqué `placeholder`, créé depuis une
   ville trouvée par la recherche de lieux. Contrainte en base : seule une catégorie `lodging`
   peut être une zone ; changer de catégorie retire le statut.
+- **Proposition d'étapes** (« Où dormir ? », `POST /trips/{id}/stays/proposal`, calcul seul ;
+  `…/proposal/apply` crée une zone par étape et la règle sur ses nuits) : `planner::stays`
+  groupe les lieux à visiter (k-médoïdes pondérés par la note du groupe) sur une matrice de temps
+  **Valhalla** (les temps à vol d'oiseau trompent au Costa Rica : Monteverde–La Fortuna ≈ 3 h de
+  route pour 25 km), choisit le nombre d'étapes (au moins `min_nights` nuits chacune) en
+  minimisant allers-retours quotidiens, transferts, 45 min par changement d'hôtel et journées
+  surchargées, répartit les nuits au prorata du temps de visite et ordonne les étapes (toutes les
+  permutations jusqu'à 7) depuis l'arrivée jusqu'au départ (lieux du voyage, ex. aéroport).
+  Chaque étape prend le nom de la localité où loger (`place=city|town|village` importés de l'OSM) :
+  la plus proche rapportée au nombre d'hébergements connus à moins de 2 km, les villes passant
+  devant leurs quartiers. Exemple réel (8 nuits) : San José → La Fortuna → Santa Elena → Quepos.
 - **Interface** (onglet Transports, section « Séjours ») : liste des séjours (zones en pointillés),
   liens de recherche Booking.com et Airbnb avec les dates d'arrivée et de départ et le nombre de
   membres, sans affiliation ni suivi ; « Remplacer par… » parmi les hébergements du voyage.

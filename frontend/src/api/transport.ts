@@ -101,6 +101,40 @@ function useDaysMutation<T>(tripId: string, path: string, method: string, poisCh
   })
 }
 
+/** Étape proposée : une localité, ses nuits et les lieux visités depuis elle. */
+export interface ProposedStay {
+  name: string
+  lat: number
+  lon: number
+  osm: { type: 'node' | 'way' | 'relation'; id: number } | null
+  first_night: string
+  last_night: string
+  nights: number
+  poi_ids: string[]
+  transfer_min: number
+}
+
+export interface StayProposal {
+  stays: ProposedStay[]
+  travel_min: number
+}
+
+export interface ProposalRequest {
+  min_nights: number
+  start_poi_id: string | null
+  end_poi_id: string | null
+}
+
+/** Calcule une proposition d'étapes (rien n'est enregistré). */
+export const useProposeStays = (tripId: string) =>
+  useMutation({
+    mutationFn: (req: ProposalRequest) => apiFetch<StayProposal>(`/trips/${tripId}/stays/proposal`, json('POST', req)),
+  })
+
+/** Crée une zone d'hébergement par étape proposée et la règle sur ses nuits. */
+export const useApplyProposal = (tripId: string) =>
+  useDaysMutation<{ stays: ProposedStay[] }>(tripId, 'stays/proposal/apply', 'POST', () => true)
+
 export const useSetStay = (tripId: string) => useDaysMutation<StayInput>(tripId, 'stays', 'PUT')
 
 export const useReplaceStay = (tripId: string) =>

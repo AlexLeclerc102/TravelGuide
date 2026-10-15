@@ -217,3 +217,125 @@ async fn stays_are_validated(db: PgPool) {
     assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
     assert_eq!(res.body["placeholder"], false);
 }
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn stays_are_proposed_from_the_places_then_applied(db: PgPool) {
+    use api::osm_import::{store, OsmPlace};
+    use api::places::{Category, OsmDetails, OsmType};
+
+    let app = TestApp::new(db);
+    let (editor, viewer, trip) = setup(&app).await; // 5 nuits
+    let town = |id: i64, name: &str, tag: &str, lat: f64, lon: f64| OsmPlace {
+        osm_type: OsmType::Node,
+        osm_id: id,
+        name: name.into(),
+        category: Category::Other,
+        osm_tag: tag.into(),
+        lat,
+        lon,
+        details: OsmDetails::default(),
+    };
+    store(
+        &app.db,
+        "test",
+        None,
+        &[
+            town(1, "San José", "place=city", 9.933, -84.08),
+            town(2, "La Fortuna", "place=town", 10.47, -84.645),
+            town(3, "El Tanque", "place=village", 10.49, -84.66),
+            // Des hôtels à La Fortuna, aucun à El Tanque, pourtant plus proche des visites.
+            OsmPlace {
+                category: Category::Lodging,
+                ..town(4, "Hotel A", "tourism=hotel", 10.471, -84.646)
+            },
+            OsmPlace {
+                category: Category::Lodging,
+                ..town(5, "Hotel B", "tourism=hotel", 10.469, -84.644)
+            },
+        ],
+    )
+    .await
+    .unwrap();
+    // Une demi-journée à San José, beaucoup à voir autour de La Fortuna.
+    for (i, (lat, lon)) in [(9.93, -84.07), (9.935, -84.075)].into_iter().enumerate() {
+        add(
+            &app,
+            &editor,
+            &trip,
+            json!({ "name": format!("Musée {i}"), "category": "museum", "duration_min": 90,
+                    "lat": lat, "lon": lon }),
+        )
+        .await;
+    }
+    for i in 0..5 {
+        add(
+            &app,
+            &editor,
+            &trip,
+            json!({ "name": format!("Nature {i}"), "category": "nature", "duration_min": 300,
+                    "lat": 10.45 + 0.01 * f64::from(i), "lon": -84.68 }),
+        )
+        .await;
+    }
+    let airport = add(
+        &app,
+        &editor,
+        &trip,
+        json!({ "name": "Aéroport", "category": "other", "lat": 9.998, "lon": -84.204 }),
+    )
+    .await;
+
+    let uri = format!("/api/v1/trips/{trip}/stays/proposal");
+    let res = app
+        .post(
+            &uri,
+            json!({ "min_nights": 2, "start_poi_id": airport, "end_poi_id": airport }),
+            Some(&viewer),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    let stays = res.body["stays"].as_array().unwrap().clone();
+    let names: Vec<&str> = stays.iter().map(|s| s["name"].as_str().unwrap()).collect();
+    // On loge là où il y a des hébergements ; on commence près de l'aéroport.
+    assert_eq!(names, vec!["San José", "La Fortuna"], "{stays:?}");
+    assert_eq!(stays[0]["first_night"], "2026-12-01");
+    assert_eq!(stays[1]["last_night"], "2026-12-05");
+    assert!(stays[1]["nights"].as_u64() > stays[0]["nights"].as_u64());
+    assert_eq!(stays[1]["poi_ids"].as_array().unwrap().len(), 5);
+    assert!(stays[1]["transfer_min"].as_u64().unwrap() > 60);
+
+    // Un lecteur peut demander une proposition, pas l'appliquer.
+    let apply = format!("{uri}/apply");
+    let body = json!({ "stays": stays });
+    assert_eq!(
+        app.post(&apply, body.clone(), Some(&viewer)).await.status,
+        StatusCode::FORBIDDEN
+    );
+    let res = app.post(&apply, body, Some(&editor)).await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    let days = res.body.as_array().unwrap();
+    assert!(days.iter().all(|d| d["base_poi_id"].is_string()));
+    let pois = app
+        .get(&format!("/api/v1/trips/{trip}/pois"), Some(&viewer))
+        .await
+        .body;
+    let areas: Vec<&str> = pois
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["placeholder"] == true)
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(areas, vec!["San José", "La Fortuna"]);
+
+    // Nuits hors du voyage : refus.
+    let res = app
+        .post(
+            &apply,
+            json!({ "stays": [{ "name": "X", "lat": 10.0, "lon": -84.0,
+                                "first_night": "2026-12-04", "last_night": "2026-12-09", "nights": 6 }] }),
+            Some(&editor),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+}

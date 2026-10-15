@@ -53,7 +53,12 @@ const KINDS: &[(&str, &[&str])] = &[
         &["monument", "ruins", "archaeological_site", "castle", "fort"],
     ),
     ("amenity", &["restaurant", "cafe"]),
+    // Localités : noms des étapes de séjour proposées (jamais suggérées comme lieux).
+    ("place", &["city", "town", "village"]),
 ];
+
+/// À incrémenter quand les lieux retenus changent : force un réimport du même fichier.
+const IMPORT_VERSION: u32 = 2;
 
 /// Lieu importé.
 #[derive(Debug, Clone, PartialEq)]
@@ -295,14 +300,15 @@ pub async fn import_if_changed(db: &PgPool, path: &Path) -> anyhow::Result<()> {
         .with_context(|| format!("extrait OSM introuvable : {}", path.display()))?;
     let size = meta.len() as i64;
     let modified = OffsetDateTime::from(meta.modified()?);
-    let previous: Option<(Option<i64>, Option<OffsetDateTime>)> =
-        sqlx::query_as("SELECT file_size, file_modified FROM osm_import")
+    let previous: Option<(String, Option<i64>, Option<OffsetDateTime>)> =
+        sqlx::query_as("SELECT source, file_size, file_modified FROM osm_import")
             .fetch_optional(db)
             .await?;
     // Précision de stockage : microseconde.
     let same = |at: OffsetDateTime| (at - modified).abs() < time::Duration::milliseconds(1);
-    if let Some((Some(s), Some(at))) = previous {
-        if s == size && same(at) {
+    let source = format!("v{IMPORT_VERSION}:{}", path.display());
+    if let Some((stored, Some(s), Some(at))) = previous {
+        if stored == source && s == size && same(at) {
             tracing::info!(path = %path.display(), "lieux OSM déjà importés");
             return Ok(());
         }
@@ -311,13 +317,7 @@ pub async fn import_if_changed(db: &PgPool, path: &Path) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let owned: PathBuf = path.to_owned();
     let places = tokio::task::spawn_blocking(move || read_extract(&owned)).await??;
-    store(
-        db,
-        &path.display().to_string(),
-        Some((size, modified)),
-        &places,
-    )
-    .await?;
+    store(db, &source, Some((size, modified)), &places).await?;
     tracing::info!(
         count = places.len(),
         seconds = started.elapsed().as_secs(),

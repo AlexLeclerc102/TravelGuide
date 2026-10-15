@@ -8,6 +8,7 @@ import { t } from '../../i18n/fr'
 import { formatDate } from '../../lib/format'
 import { lodgingSearchLinks, placeQuery } from '../../lib/links'
 import { stays, type Stay } from '../../lib/stays'
+import { StayProposal } from './StayProposal'
 
 const short = (date: string) => formatDate(date, { weekday: 'short', day: 'numeric', month: 'short' })
 const external = { target: '_blank', rel: 'noopener noreferrer nofollow' } as const
@@ -29,6 +30,7 @@ export function StaysSection({ trip, days, pois, canEdit }: Props) {
     <section className="card">
       <h2 className="section-title">{t.stays.title}</h2>
       <p className="small muted">{t.stays.hint}</p>
+      <StayProposal trip={trip} pois={pois} canEdit={canEdit} />
       <ul className="stay-list">
         {list.map((stay) => (
           <StayRow key={stay.firstNight} trip={trip} stay={stay} poi={stay.poiId ? byId.get(stay.poiId) : undefined} pois={pois} canEdit={canEdit} />

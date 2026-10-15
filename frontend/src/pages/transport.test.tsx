@@ -266,3 +266,44 @@ describe('séjours', () => {
     expect(await screen.findByText(/🛏️ Hotel Fortuna/)).toBeInTheDocument()
   })
 })
+
+describe('proposition d’étapes', () => {
+  it('propose où dormir d’après les lieux, puis applique les étapes', async () => {
+    const calls: { path: string; body: Record<string, unknown> }[] = []
+    const proposal = {
+      stays: [
+        { name: 'San José', lat: 9.93, lon: -84.08, osm: null, first_night: '2026-12-01', last_night: '2026-12-01', nights: 1, poi_ids: ['p1', 'p3'], transfer_min: 0 },
+        { name: 'La Fortuna', lat: 10.47, lon: -84.64, osm: null, first_night: '2026-12-02', last_night: '2026-12-02', nights: 1, poi_ids: [], transfer_min: 150 },
+      ],
+      travel_min: 230,
+    }
+    mockApi(
+      routes('editor', {
+        'POST /trips/trip-1/stays/proposal': (init) => {
+          calls.push({ path: 'proposal', body: JSON.parse(String(init?.body)) })
+          return { status: 200, body: proposal }
+        },
+        'POST /trips/trip-1/stays/proposal/apply': (init) => {
+          calls.push({ path: 'apply', body: JSON.parse(String(init?.body)) })
+          return { status: 200, body: [day('2026-12-01', { base_poi_id: 'a1' }), day('2026-12-02', { base_poi_id: 'a2' })] }
+        },
+      }),
+    )
+    await openTransport()
+    fireEvent.click(await screen.findByText('Où dormir ? Proposer des étapes'))
+    const form = screen.getByRole('form', { name: 'Où dormir ? Proposer des étapes' })
+    fireEvent.change(within(form).getByLabelText('Nuits minimum par étape'), { target: { value: '1' } })
+    fireEvent.change(within(form).getByLabelText('Arrivée dans le pays'), { target: { value: 'p1' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Proposer' }))
+
+    expect(await screen.findByText('🛏️ La Fortuna')).toBeInTheDocument()
+    expect(calls[0]).toEqual({ path: 'proposal', body: { min_nights: 1, start_poi_id: 'p1', end_poi_id: null } })
+    expect(screen.getByText(/2 lieux/)).toBeInTheDocument()
+    expect(screen.getByText('≈ 150 min de route depuis l’étape précédente')).toBeInTheDocument()
+    expect(screen.getByText('Trajets estimés sur le voyage : 3 h 50')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Appliquer ces étapes' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Étapes appliquées')
+    expect(calls[1]).toEqual({ path: 'apply', body: { stays: proposal.stays } })
+  })
+})

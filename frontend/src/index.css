@@ -174,6 +174,11 @@ button.danger-outline { color: var(--error); border-color: var(--error); }
 .form label.checkbox { display: flex; flex-direction: row; align-items: center; gap: 0.4rem; }
 .area-hotels summary { cursor: pointer; }
 .area-hotels .result-list { margin-top: 0.4rem; }
+.stay-proposal { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.7rem; margin: 0.6rem 0; }
+.stay-proposal summary { cursor: pointer; font-weight: 600; }
+.stay-proposal .form { margin-top: 0.4rem; }
+.proposal-list { margin: 0.6rem 0 0.3rem; padding-left: 1.3rem; display: grid; gap: 0.35rem; }
+.proposal-transfer { display: block; }
 .add-stay summary { cursor: pointer; font-weight: 600; }
 .add-stay .form { margin-top: 0.5rem; }
 .suggestion-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.5rem; }
