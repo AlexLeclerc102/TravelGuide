@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::auth::CurrentUser;
 use crate::error::{AppError, AppResult, ErrorBody};
 use crate::pois::{self, Poi};
+use crate::realtime::{ClientId, Topic};
 use crate::state::AppState;
 use crate::trips::{self, Role};
 use crate::validate;
@@ -105,6 +106,7 @@ async fn list_reviews(
 async fn put_my_review(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path((trip_id, poi_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<PutReview>,
 ) -> AppResult<Json<Poi>> {
@@ -126,6 +128,12 @@ async fn put_my_review(
     .bind(&comment)
     .execute(&state.db)
     .await?;
+    state.realtime.changed(
+        trip_id,
+        &[Topic::Pois, Topic::Reviews],
+        &current.user,
+        &client,
+    );
     poi_for(&state, &current, trip_id, poi_id).await
 }
 
@@ -136,6 +144,7 @@ async fn put_my_review(
 async fn delete_my_review(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path((trip_id, poi_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<Json<Poi>> {
     check_access(&state, &current, trip_id, poi_id).await?;
@@ -144,5 +153,11 @@ async fn delete_my_review(
         .bind(current.user.id)
         .execute(&state.db)
         .await?;
+    state.realtime.changed(
+        trip_id,
+        &[Topic::Pois, Topic::Reviews],
+        &current.user,
+        &client,
+    );
     poi_for(&state, &current, trip_id, poi_id).await
 }

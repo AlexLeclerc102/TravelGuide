@@ -349,6 +349,24 @@ export const fr = {
     dragEnd: (name: string) => `${name} déposé.`,
     dragCancel: (name: string) => `Déplacement de ${name} annulé.`,
   },
+  realtime: {
+    live: 'En direct',
+    connecting: 'Connexion…',
+    offline: 'Hors ligne · reconnexion…',
+    online: (names: string) => `Aussi en ligne : ${names}`,
+    alone: 'Personne d’autre en ligne',
+    changed: (name: string, what: string, time: string) => `${name} a modifié ${what} (${time})`,
+    topics: {
+      trip: 'le voyage',
+      members: 'les membres',
+      invitations: 'les invitations',
+      pois: 'les lieux',
+      reviews: 'les avis',
+      days: 'les transports',
+      itinerary: 'l’itinéraire',
+    } as Record<string, string>,
+    removed: 'Vous n’avez plus accès à ce voyage : il a été supprimé, ou vous en avez été retiré.',
+  },
   map: {
     unavailable:
       'La carte ne peut pas s’afficher : ce navigateur n’a pas WebGL (accélération matérielle désactivée ?). La liste des lieux reste utilisable.',

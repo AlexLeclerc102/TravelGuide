@@ -213,3 +213,36 @@
   (autre jour ou retrait), « Ajouter au… » pour les lieux hors itinéraire, « Recalculer ce
   jour » sur un jour périmé. Affichage optimiste des déplacements (annulé en cas d'erreur, et
   itinéraire rechargé sur conflit).
+
+## Collaboration en temps réel (incrément 8)
+
+- **Canal** : `GET /api/v1/trips/{t}/ws` (WebSocket), cookie de session et appartenance au voyage
+  vérifiés à l'ouverture. L'en-tête **`Origin` doit être autorisé** (sinon 403) : un site tiers
+  ne peut pas ouvrir le canal avec le cookie de la victime (détournement de WebSocket intersite).
+  30 ouvertures / min par utilisateur, 200 connexions par voyage, messages entrants ≤ 1 Ko
+  (le client n'envoie rien d'utile).
+- **Notifications, pas de données** : le serveur envoie `changed` (sujets : `trip`, `members`,
+  `invitations`, `pois`, `reviews`, `days`, `itinerary`, auteur, onglet d'origine), `presence`
+  (membres en ligne, une entrée par personne), `removed` (accès perdu : retiré du voyage, voyage
+  ou compte supprimé, session terminée — la connexion se ferme) et `resync` (notifications
+  perdues par un client trop lent). Chaque client recharge ensuite par l'API REST avec ses
+  propres droits : rien ne fuit par le canal (les emails restent réservés à l'organisateur).
+- **Émission** : chaque route qui modifie un voyage publie après succès (lieux, avis, jours,
+  voyage, membres, invitations, itinéraire, changement de nom ou suppression de compte).
+  L'en-tête `X-Client-Id` (identifiant aléatoire de l'onglet) est renvoyé dans `changed` :
+  l'onglet auteur ignore sa propre notification, ses autres onglets se mettent à jour.
+- **Revérification** toutes les 30 s (avec un ping) : session toujours valide et toujours
+  membre, sinon `removed`. Retrait d'un membre et suppression d'un voyage : immédiat.
+- **Hub en mémoire** (`realtime::Hub`, un canal `broadcast` par voyage ouvert) : une seule
+  instance de l'API. Pour en déployer plusieurs, relayer les notifications entre instances
+  (PostgreSQL `LISTEN/NOTIFY`, par exemple).
+- **Frontend** (`useTripRealtime`) : invalide les requêtes TanStack Query des sujets reçus,
+  affiche l'état de la connexion, les autres membres en ligne et la dernière modification
+  (« Bruno a modifié les avis (22:27) »). Reconnexion automatique (0,5 s, doublé jusqu'à 30 s)
+  puis rechargement complet du voyage pour rattraper les notifications manquées. Accès perdu :
+  message dédié, plus de reconnexion. Les modifications concurrentes restent arbitrées par les
+  versions (409) déjà en place.
+- **Tests** : hub (présence, isolation des voyages), intégration par un vrai WebSocket
+  (`tokio-tungstenite`) : notifications et présence, refus hors membres / mauvaise origine /
+  sans session, déconnexion d'un membre retiré et d'un voyage supprimé ; frontend avec un
+  WebSocket factice (invalidations, onglet auteur ignoré, reconnexion, accès perdu).

@@ -13,6 +13,7 @@ pub mod opening;
 pub mod places;
 pub mod pois;
 pub mod rate_limit;
+pub mod realtime;
 pub mod routes;
 pub mod routing;
 pub mod state;
@@ -69,7 +70,10 @@ pub fn build_app(
             Method::PATCH,
             Method::DELETE,
         ])
-        .allow_headers([header::CONTENT_TYPE]);
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::HeaderName::from_static(realtime::CLIENT_ID_HEADER),
+        ]);
 
     let state = AppState {
         db,
@@ -78,6 +82,7 @@ pub fn build_app(
         rate_limiter: Arc::new(RateLimiter::default()),
         places,
         routing,
+        realtime: Arc::new(realtime::Hub::default()),
     };
 
     let (api, openapi) = OpenApiRouter::with_openapi(ApiDoc::openapi())

@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::auth::CurrentUser;
 use crate::error::{AppError, AppResult, ErrorBody};
 use crate::itinerary::{self, Adjustment, Itinerary};
+use crate::realtime::{ClientId, Topic};
 use crate::state::AppState;
 use crate::trips::{self, Role};
 
@@ -50,6 +51,7 @@ async fn get_itinerary(
 async fn generate_itinerary(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path(trip_id): Path<Uuid>,
 ) -> AppResult<Json<Itinerary>> {
     trips::require_role(&state.db, trip_id, current.user.id, Role::Editor).await?;
@@ -63,6 +65,9 @@ async fn generate_itinerary(
     let generated = itinerary::load(&state.db, &trip).await?.ok_or_else(|| {
         AppError::Internal(anyhow::anyhow!("itinéraire introuvable après génération"))
     })?;
+    state
+        .realtime
+        .changed(trip_id, &[Topic::Itinerary], &current.user, &client);
     Ok(Json(generated))
 }
 
@@ -94,6 +99,7 @@ pub struct VersionRequest {
 async fn apply(
     state: &AppState,
     current: &CurrentUser,
+    client: &ClientId,
     trip_id: Uuid,
     version: i64,
     adjustment: Adjustment,
@@ -112,6 +118,9 @@ async fn apply(
     let updated = itinerary::load(&state.db, &trip).await?.ok_or_else(|| {
         AppError::Internal(anyhow::anyhow!("itinéraire introuvable après ajustement"))
     })?;
+    state
+        .realtime
+        .changed(trip_id, &[Topic::Itinerary], &current.user, client);
     Ok(Json(updated))
 }
 
@@ -126,6 +135,7 @@ async fn apply(
 async fn move_stop(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path(trip_id): Path<Uuid>,
     Json(req): Json<MoveRequest>,
 ) -> AppResult<Json<Itinerary>> {
@@ -134,7 +144,7 @@ async fn move_stop(
         date: req.date,
         position: req.position,
     };
-    apply(&state, &current, trip_id, req.version, adjustment).await
+    apply(&state, &current, &client, trip_id, req.version, adjustment).await
 }
 
 /// Verrouille ou déverrouille une étape (éditeur) : une étape verrouillée garde son jour
@@ -146,6 +156,7 @@ async fn move_stop(
 async fn lock_stop(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path((trip_id, poi_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<LockRequest>,
 ) -> AppResult<Json<Itinerary>> {
@@ -153,7 +164,7 @@ async fn lock_stop(
         poi_id,
         locked: req.locked,
     };
-    apply(&state, &current, trip_id, req.version, adjustment).await
+    apply(&state, &current, &client, trip_id, req.version, adjustment).await
 }
 
 /// Recalcule les horaires et trajets d'une journée dans son ordre actuel, avec les lieux et
@@ -167,12 +178,14 @@ async fn lock_stop(
 async fn recompute_day(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path((trip_id, date)): Path<(Uuid, Date)>,
     Json(req): Json<VersionRequest>,
 ) -> AppResult<Json<Itinerary>> {
     apply(
         &state,
         &current,
+        &client,
         trip_id,
         req.version,
         Adjustment::Recompute { date },

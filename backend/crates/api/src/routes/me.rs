@@ -9,10 +9,12 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
+use uuid::Uuid;
 
 use crate::account::{self, AccountExport};
 use crate::auth::{password, session, CurrentUser};
 use crate::error::{AppError, AppResult, ErrorBody};
+use crate::realtime::{ClientId, Topic};
 use crate::state::AppState;
 use crate::users::{User, UserRow};
 use crate::validate;
@@ -57,6 +59,7 @@ async fn get_me(current: CurrentUser) -> Json<User> {
 async fn update_me(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Json(req): Json<UpdateMe>,
 ) -> AppResult<Json<User>> {
     let mut user = current.user;
@@ -70,8 +73,31 @@ async fn update_me(
         .bind(name)
         .fetch_one(&state.db)
         .await?;
+        // Le nouveau nom apparaît dans les membres, avis et lieux de ses voyages.
+        for trip_id in trips_of(&state, user.id).await? {
+            state.realtime.changed(
+                trip_id,
+                &[
+                    Topic::Members,
+                    Topic::Pois,
+                    Topic::Reviews,
+                    Topic::Itinerary,
+                ],
+                &user,
+                &client,
+            );
+        }
     }
     Ok(Json(user.into()))
+}
+
+async fn trips_of(state: &AppState, user_id: Uuid) -> AppResult<Vec<Uuid>> {
+    Ok(
+        sqlx::query_scalar("SELECT trip_id FROM trip_members WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_all(&state.db)
+            .await?,
+    )
 }
 
 /// Définit ou change le mot de passe. Les autres sessions sont fermées.
@@ -136,7 +162,28 @@ async fn delete_me(
             return Err(AppError::BadRequest("mot de passe incorrect".into()));
         }
     }
+    let trips = trips_of(&state, user.id).await?;
     account::delete(&state.db, user.id).await?;
+    // Ses connexions se ferment ; les autres membres rechargent (organisation transférée,
+    // avis supprimés) ou quittent un voyage supprimé avec le compte.
+    for trip_id in trips {
+        let still_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM trips WHERE id = $1)")
+                .bind(trip_id)
+                .fetch_one(&state.db)
+                .await?;
+        if still_exists {
+            state.realtime.kick(trip_id, user.id);
+            state.realtime.changed(
+                trip_id,
+                &[Topic::Trip, Topic::Members, Topic::Pois, Topic::Reviews],
+                &user,
+                &ClientId::default(),
+            );
+        } else {
+            state.realtime.deleted(trip_id);
+        }
+    }
     tracing::info!(user_id = %user.id, "compte supprimé");
     Ok((
         StatusCode::NO_CONTENT,

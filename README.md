@@ -53,7 +53,7 @@ ils nécessitent `DATABASE_URL` pointant vers un PostgreSQL avec PostGIS, et un 
 ```
 backend/
   crates/planner/   algorithme d'itinéraire pur (sans I/O), tests unitaires
-  crates/api/       Axum + SQLx + OpenAPI (utoipa) + WebSocket
+  crates/api/       Axum + SQLx + OpenAPI (utoipa) + WebSocket (temps réel par voyage)
   migrations/       migrations SQL (appliquées au démarrage)
 frontend/           React + TypeScript (Vite), TanStack Query, MapLibre GL
 docs/               architecture et décisions

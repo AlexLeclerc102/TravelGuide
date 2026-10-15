@@ -14,6 +14,7 @@ use crate::error::{AppError, AppResult, ErrorBody};
 use crate::opening::{self, DaySchedule, HoursStatus};
 use crate::places::{Category, OsmRef};
 use crate::pois::{self, Poi};
+use crate::realtime::{ClientId, Topic};
 use crate::state::AppState;
 use crate::trips::{self, Role};
 use crate::validate;
@@ -98,6 +99,7 @@ async fn list_pois(
 async fn create_poi(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path(trip_id): Path<Uuid>,
     Json(req): Json<CreatePoi>,
 ) -> AppResult<(StatusCode, Json<Poi>)> {
@@ -162,6 +164,12 @@ async fn create_poi(
     let poi = pois::get(&mut *tx, trip_id, poi_id, current.user.id, dates).await?;
     tx.commit().await?;
     tracing::info!(%trip_id, %poi_id, "POI ajouté");
+    state.realtime.changed(
+        trip_id,
+        &[Topic::Pois, Topic::Itinerary],
+        &current.user,
+        &client,
+    );
     Ok((StatusCode::CREATED, Json(poi)))
 }
 
@@ -190,6 +198,7 @@ async fn get_poi(
 async fn update_poi(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path((trip_id, poi_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<UpdatePoi>,
 ) -> AppResult<Json<Poi>> {
@@ -248,6 +257,12 @@ async fn update_poi(
             "ce lieu a été modifié entre-temps, rechargez-le".into(),
         ));
     }
+    state.realtime.changed(
+        trip_id,
+        &[Topic::Pois, Topic::Itinerary],
+        &current.user,
+        &client,
+    );
     Ok(Json(
         pois::get(&state.db, trip_id, poi_id, current.user.id, dates).await?,
     ))
@@ -260,6 +275,7 @@ async fn update_poi(
 async fn delete_poi(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path((trip_id, poi_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<StatusCode> {
     trips::require_role(&state.db, trip_id, current.user.id, Role::Editor).await?;
@@ -272,6 +288,12 @@ async fn delete_poi(
         return Err(AppError::NotFound);
     }
     tracing::info!(%trip_id, %poi_id, "POI supprimé");
+    state.realtime.changed(
+        trip_id,
+        &[Topic::Pois, Topic::Days, Topic::Itinerary],
+        &current.user,
+        &client,
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 

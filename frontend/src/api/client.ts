@@ -12,8 +12,18 @@ export class ApiError extends Error {
 
 const BASE = '/api/v1'
 
+/**
+ * Identifiant de cet onglet, envoyé avec chaque requête (`X-Client-Id`) : le serveur le
+ * renvoie dans les notifications temps réel, pour que l'onglet ignore ses propres changements.
+ */
+export const CLIENT_ID: string =
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
+  headers.set('X-Client-Id', CLIENT_ID)
   if (init.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }

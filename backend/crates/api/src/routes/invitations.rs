@@ -20,6 +20,7 @@ use uuid::Uuid;
 use crate::auth::{session, token, CurrentUser};
 use crate::client_ip::ClientIp;
 use crate::error::{AppError, AppResult, ErrorBody};
+use crate::realtime::{ClientId, Topic};
 use crate::state::AppState;
 use crate::trips::{self, Role};
 use crate::users::{self, User};
@@ -119,6 +120,7 @@ async fn list_invitations(
 async fn create_invitation(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path(trip_id): Path<Uuid>,
     Json(req): Json<CreateInvitation>,
 ) -> AppResult<(StatusCode, Json<CreatedInvitation>)> {
@@ -154,6 +156,9 @@ async fn create_invitation(
     .fetch_one(&state.db)
     .await?;
     let url = format!("{}/invite/{token}", state.config.public_origin);
+    state
+        .realtime
+        .changed(trip_id, &[Topic::Invitations], &current.user, &client);
     Ok((
         StatusCode::CREATED,
         Json(CreatedInvitation { invitation, url }),
@@ -167,6 +172,7 @@ async fn create_invitation(
 async fn revoke_invitation(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path((trip_id, invitation_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<StatusCode> {
     trips::require_role(&state.db, trip_id, current.user.id, Role::Organizer).await?;
@@ -181,6 +187,9 @@ async fn revoke_invitation(
     if res.rows_affected() == 0 {
         return Err(AppError::NotFound);
     }
+    state
+        .realtime
+        .changed(trip_id, &[Topic::Invitations], &current.user, &client);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -309,6 +318,13 @@ async fn accept_invitation(
         }
     };
     tx.commit().await?;
+    state.realtime.changed(
+        inv.trip_id,
+        &[Topic::Trip, Topic::Members, Topic::Invitations],
+        &user,
+        // La personne qui rejoint n'a pas encore le voyage ouvert.
+        &ClientId::default(),
+    );
 
     let jar = if new_session.is_some() {
         let ua = headers

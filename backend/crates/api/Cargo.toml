@@ -37,4 +37,6 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+futures-util = { workspace = true }
+tokio-tungstenite = { workspace = true }
 http-body-util = { workspace = true }

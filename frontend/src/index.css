@@ -291,3 +291,13 @@ button.danger-outline { color: var(--error); border-color: var(--error); }
 .drop-hint { border: 1px dashed var(--border); border-radius: 6px; padding: 0.4rem 0.6rem; }
 .unscheduled li { display: flex; gap: 0.4rem; align-items: baseline; flex-wrap: wrap; }
 .unscheduled .move-select { margin-left: auto; }
+
+/* Collaboration en temps réel (incrément 8) */
+.collab-bar { display: grid; gap: 0.15rem; margin-top: 0.3rem; }
+.collab-bar p { margin: 0; }
+.status-dot {
+  display: inline-block; width: 0.55rem; height: 0.55rem; border-radius: 50%;
+  background: var(--muted); vertical-align: middle;
+}
+.status-dot.online { background: var(--ok); }
+.status-dot.offline { background: var(--warning); }

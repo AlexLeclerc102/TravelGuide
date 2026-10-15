@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { useMe } from '../api/auth'
 import { ApiError } from '../api/client'
 import { errorMessage } from '../api/errors'
 import { DEFAULT_DURATION, placeToInput, reverseGeocode, usePois, type Bounds, type PoiInput } from '../api/pois'
-import { useDeleteTrip, useRemoveMember, useTrip, useUpdateTrip, type Trip } from '../api/trips'
+import { tripKeys, useDeleteTrip, useRemoveMember, useTrip, useUpdateTrip, type Trip } from '../api/trips'
 import { MapView } from '../components/MapView'
+import { CollabBar } from '../components/trip/CollabBar'
 import { InvitationsPanel } from '../components/trip/InvitationsPanel'
 import { ItineraryPanel } from '../components/trip/ItineraryPanel'
 import { MembersPanel } from '../components/trip/MembersPanel'
@@ -14,13 +16,26 @@ import { TransportPanel } from '../components/trip/TransportPanel'
 import { TripForm } from '../components/trip/TripForm'
 import { t } from '../i18n/fr'
 import { dayCount, formatDateRange } from '../lib/format'
+import { useTripRealtime } from '../realtime/useTripRealtime'
 
 type Tab = 'places' | 'itinerary' | 'transport' | 'members' | 'settings'
 
 export function TripPage() {
   const { tripId = '' } = useParams()
   const { data: trip, error, isPending } = useTrip(tripId)
+  const qc = useQueryClient()
+  const [removed, setRemoved] = useState(false)
 
+  if (removed) {
+    return (
+      <div className="page">
+        <Link to="/">{t.trip.back}</Link>
+        <p className="notice warning" role="alert">
+          {t.realtime.removed}
+        </p>
+      </div>
+    )
+  }
   if (isPending) return <p className="centered muted">{t.common.loading}</p>
   if (error || !trip) {
     return (
@@ -30,11 +45,21 @@ export function TripPage() {
       </div>
     )
   }
-  return <TripView trip={trip} />
+  return (
+    <TripView
+      trip={trip}
+      onRemoved={() => {
+        setRemoved(true)
+        qc.removeQueries({ queryKey: tripKeys.one(tripId) })
+        qc.invalidateQueries({ queryKey: tripKeys.all, exact: true })
+      }}
+    />
+  )
 }
 
-function TripView({ trip }: { trip: Trip }) {
+function TripView({ trip, onRemoved }: { trip: Trip; onRemoved: () => void }) {
   const [tab, setTab] = useState<Tab>('places')
+  const realtime = useTripRealtime(trip.id, onRemoved)
   const { data: pois = [] } = usePois(trip.id)
   const [selection, setSelection] = useState<Selection>(null)
   const [addMode, setAddMode] = useState(false)
@@ -94,6 +119,7 @@ function TripView({ trip }: { trip: Trip }) {
           <p className="small">
             {t.trip.myRole} : <strong>{t.roles[trip.my_role]}</strong>
           </p>
+          <CollabBar {...realtime} />
         </header>
         <div className="tabs" role="tablist">
           {(['places', 'itinerary', 'transport', 'members', 'settings'] as Tab[]).map((k) => (

@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::auth::CurrentUser;
 use crate::error::{AppError, AppResult, ErrorBody};
+use crate::realtime::{ClientId, Topic};
 use crate::state::AppState;
 use crate::trips::{self, Role};
 
@@ -89,6 +90,7 @@ async fn list_members(
 async fn update_member(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path((trip_id, user_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<UpdateMember>,
 ) -> AppResult<StatusCode> {
@@ -119,6 +121,12 @@ async fn update_member(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    state.realtime.changed(
+        trip_id,
+        &[Topic::Trip, Topic::Members],
+        &current.user,
+        &client,
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -130,6 +138,7 @@ async fn update_member(
 async fn remove_member(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path((trip_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<StatusCode> {
     let me = current.user.id;
@@ -163,5 +172,13 @@ async fn remove_member(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+    // Ses connexions se ferment ; les autres rechargent membres et notes.
+    state.realtime.kick(trip_id, user_id);
+    state.realtime.changed(
+        trip_id,
+        &[Topic::Trip, Topic::Members, Topic::Pois, Topic::Reviews],
+        &current.user,
+        &client,
+    );
     Ok(StatusCode::NO_CONTENT)
 }

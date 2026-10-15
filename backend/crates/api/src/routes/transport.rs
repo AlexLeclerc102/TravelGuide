@@ -17,6 +17,7 @@ use uuid::Uuid;
 use crate::auth::CurrentUser;
 use crate::days::{self, TripDay};
 use crate::error::{AppError, AppResult, ErrorBody};
+use crate::realtime::{ClientId, Topic};
 use crate::routing::RoutedLeg;
 use crate::state::AppState;
 use crate::travel::{TravelOption, TravelSource};
@@ -98,6 +99,7 @@ async fn list_days(
 async fn update_day(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path((trip_id, date)): Path<(Uuid, Date)>,
     Json(req): Json<UpdateTripDay>,
 ) -> AppResult<Json<TripDay>> {
@@ -141,6 +143,12 @@ async fn update_day(
         .execute(&state.db)
         .await?;
     }
+    state.realtime.changed(
+        trip_id,
+        &[Topic::Days, Topic::Itinerary],
+        &current.user,
+        &client,
+    );
     Ok(Json(days::get(&state.db, trip_id, date).await?))
 }
 

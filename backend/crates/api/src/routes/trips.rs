@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::auth::CurrentUser;
 use crate::error::{AppError, AppResult, ErrorBody};
+use crate::realtime::{ClientId, Topic};
 use crate::state::AppState;
 use crate::trips::{self, hhmm, normalize_modes, Role, TransportMode, Trip};
 use crate::validate;
@@ -163,6 +164,7 @@ async fn get_trip(
 async fn update_trip(
     State(state): State<AppState>,
     current: CurrentUser,
+    client: ClientId,
     Path(trip_id): Path<Uuid>,
     Json(req): Json<UpdateTrip>,
 ) -> AppResult<Json<Trip>> {
@@ -217,6 +219,12 @@ async fn update_trip(
         .bind(end_date)
         .execute(&state.db)
         .await?;
+    state.realtime.changed(
+        trip_id,
+        &[Topic::Trip, Topic::Days, Topic::Itinerary],
+        &current.user,
+        &client,
+    );
     Ok(Json(
         trips::get_for_user(&state.db, trip_id, current.user.id).await?,
     ))
@@ -236,6 +244,7 @@ async fn delete_trip(
         .bind(trip_id)
         .execute(&state.db)
         .await?;
+    state.realtime.deleted(trip_id);
     tracing::info!(%trip_id, "voyage supprimé");
     Ok(StatusCode::NO_CONTENT)
 }
