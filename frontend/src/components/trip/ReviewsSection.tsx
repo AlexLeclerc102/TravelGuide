@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useMe } from '../../api/auth'
 import { errorMessage } from '../../api/errors'
-import { useReviews, useSaveMyReview, type Poi } from '../../api/pois'
+import { useReviews, useSaveMyReview, type MyReview, type Poi } from '../../api/pois'
 import { t } from '../../i18n/fr'
 import { formatRating } from '../../lib/format'
 import { StarInput, Stars } from './Stars'
@@ -12,6 +12,14 @@ export function ReviewsSection({ tripId, poi }: { tripId: string; poi: Poi }) {
   const { data: reviews = [] } = useReviews(tripId, poi.id)
   const { rating } = poi
   const extremes = rating.disagreement ? [rating.min, rating.max] : []
+  // Ici plutôt que dans le formulaire : il est recréé après chaque enregistrement (voir sa clé),
+  // ce qui effacerait la confirmation.
+  const save = useSaveMyReview(tripId, poi.id)
+  const [notice, setNotice] = useState<{ poiId: string; text: string } | null>(null)
+  const submit = (review: MyReview | null) =>
+    save.mutate(review, {
+      onSuccess: () => setNotice({ poiId: poi.id, text: review ? t.reviews.saved : t.reviews.removed }),
+    })
 
   return (
     <section className="reviews" aria-label={t.reviews.title}>
@@ -29,7 +37,19 @@ export function ReviewsSection({ tripId, poi }: { tripId: string; poi: Poi }) {
         <p className="notice warning small">{t.reviews.disagreementHint(rating.min, rating.max)}</p>
       )}
 
-      <MyReviewForm key={`${poi.id}:${poi.my_review?.rating}:${poi.my_review?.comment}`} tripId={tripId} poi={poi} />
+      <MyReviewForm
+        key={`${poi.id}:${poi.my_review?.rating}:${poi.my_review?.comment}`}
+        poi={poi}
+        pending={save.isPending}
+        error={save.error}
+        onSubmit={submit}
+        onEdit={() => setNotice(null)}
+      />
+      {notice?.poiId === poi.id && (
+        <p className="success small" role="status">
+          {notice.text}
+        </p>
+      )}
 
       {reviews.length > 0 && (
         <>
@@ -51,37 +71,59 @@ export function ReviewsSection({ tripId, poi }: { tripId: string; poi: Poi }) {
   )
 }
 
-function MyReviewForm({ tripId, poi }: { tripId: string; poi: Poi }) {
+interface FormProps {
+  poi: Poi
+  pending: boolean
+  error: unknown
+  onSubmit: (review: MyReview | null) => void
+  /** L'utilisateur modifie son avis : la confirmation précédente n'a plus lieu d'être. */
+  onEdit: () => void
+}
+
+function MyReviewForm({ poi, pending, error, onSubmit, onEdit }: FormProps) {
   const [value, setValue] = useState(poi.my_review?.rating ?? 0)
   const [comment, setComment] = useState(poi.my_review?.comment ?? '')
-  const save = useSaveMyReview(tripId, poi.id)
 
   function submit(e: FormEvent) {
     e.preventDefault()
-    if (value) save.mutate({ rating: value, comment })
+    if (value) onSubmit({ rating: value, comment })
   }
 
   return (
     <form className="form my-review" onSubmit={submit} aria-label={t.reviews.mine}>
       <div className="row">
         <span className="small">{t.reviews.mine}</span>
-        <StarInput value={value} onChange={setValue} />
+        <StarInput
+          value={value}
+          onChange={(v) => {
+            setValue(v)
+            onEdit()
+          }}
+        />
       </div>
       <label>
         {t.reviews.comment}
-        <textarea value={comment} onChange={(e) => setComment(e.target.value)} maxLength={2000} rows={2} />
+        <textarea
+          value={comment}
+          onChange={(e) => {
+            setComment(e.target.value)
+            onEdit()
+          }}
+          maxLength={2000}
+          rows={2}
+        />
       </label>
-      {save.error && (
+      {!!error && (
         <p className="error" role="alert">
-          {errorMessage(save.error)}
+          {errorMessage(error)}
         </p>
       )}
       <div className="actions">
-        <button type="submit" className="primary" disabled={!value || save.isPending}>
+        <button type="submit" className="primary" disabled={!value || pending}>
           {t.reviews.save}
         </button>
         {poi.my_review && (
-          <button type="button" disabled={save.isPending} onClick={() => save.mutate(null)}>
+          <button type="button" disabled={pending} onClick={() => onSubmit(null)}>
             {t.reviews.remove}
           </button>
         )}

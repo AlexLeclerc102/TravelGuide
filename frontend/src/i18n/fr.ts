@@ -237,6 +237,7 @@ export const fr = {
     save: 'Enregistrer mon avis',
     remove: 'Retirer mon avis',
     saved: 'Avis enregistré.',
+    removed: 'Avis retiré.',
     toRate: 'À noter',
     others: 'Avis des membres',
     you: '(vous)',

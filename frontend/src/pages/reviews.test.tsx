@@ -80,6 +80,7 @@ describe('avis', () => {
             body: poi('p1', 'Volcán Arenal', { count: 1, average: 4, min: 4, max: 4, disagreement: false }, { my_review: { rating: 4, comment: 'Superbe' } }),
           }
         },
+        'DELETE /trips/trip-1/pois/p1/reviews/me': () => ({ status: 200, body: poi('p1', 'Volcán Arenal') }),
       }),
     )
     renderApp('/trips/trip-1')
@@ -96,6 +97,15 @@ describe('avis', () => {
     expect(body).toEqual({ rating: 4, comment: 'Superbe' })
     expect(screen.queryByText('À noter')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retirer mon avis' })).toBeInTheDocument()
+    // Confirmation, qui disparaît dès que l'on modifie de nouveau son avis.
+    expect(screen.getByRole('status')).toHaveTextContent('Avis enregistré.')
+    const edited = screen.getByRole('form', { name: 'Mon avis' })
+    fireEvent.click(within(edited).getByRole('radio', { name: 'Noter 5 sur 5' }))
+    expect(screen.queryByText('Avis enregistré.')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retirer mon avis' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Avis retiré.')
+    expect(screen.queryByRole('button', { name: 'Retirer mon avis' })).not.toBeInTheDocument()
   })
 
   it('affiche la moyenne, l’avis de chacun et signale le désaccord', async () => {

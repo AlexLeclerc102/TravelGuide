@@ -105,6 +105,7 @@ test('un groupe prépare un voyage ensemble, en direct', async ({ page: ana, bro
     await review.getByRole('radio', { name: 'Noter 5 sur 5' }).click()
     await review.getByLabel('Commentaire').fill('Incontournable au lever du soleil')
     await review.getByRole('button', { name: 'Enregistrer mon avis' }).click()
+    await expect(bruno.getByRole('status')).toHaveText('Avis enregistré.')
     await expect(bruno.getByRole('region', { name: 'Avis du groupe' })).toContainText('Incontournable au lever du soleil')
     await expect(review.getByRole('button', { name: 'Retirer mon avis' })).toBeVisible()
 
