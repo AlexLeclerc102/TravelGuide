@@ -205,7 +205,15 @@
   du jour, zones comprises ; à défaut les lieux du voyage), rayon selon le mode le plus rapide
   (3 km à pied, 10 km à vélo, 40 km en voiture), hors lieux déjà ajoutés et suggestions écartées.
   Sans filtre, ni restaurants (proches de tout, ils évinceraient les sites : filtre « Où manger »)
-  ni hébergements (proposés autour d'une zone, `?lodging_near=`).
+  ni hébergements (proposés autour d'une zone, `?lodging_near=`). Un objet par élément Wikidata
+  (un parc est souvent `boundary=national_park` et `protected_area`).
+- **Découverte** : voyage sans hébergement ni lieu, statut `discovery` : les 500 lieux les plus
+  notables de tout l'extrait sont classés sans proximité, avec une pénalité par lieu de même
+  catégorie déjà retenu (plafonnée) pour varier.
+- **Notoriété** (`notability`, migration 0012) : langues Wikipédia par élément Wikidata dans
+  `wikidata_notability` (indépendante des réimports), demandées en tâche de fond après l'import
+  puis chaque jour (50 éléments par requête, 250 ms entre deux, rafraîchies après 30 jours ; ~500
+  éléments en 8 s pour le Costa Rica). Les lieux pas encore rafraîchis sont demandés à la volée.
 - **Score** (`planner::recommend`, pur et testé) : proximité (trajet estimé à vol d'oiseau majoré,
   écarté au-delà de 2 h 30), notoriété (langues Wikipédia de l'élément Wikidata, en cache 7 jours,
   0 si Wikidata ne répond pas), goûts du groupe (moyenne par catégorie, au moins 2 avis), données
@@ -213,9 +221,19 @@
   saturation (catégorie déjà très présente, refus du groupe). Fermé à chaque date : écarté. Puis
   diversification (même catégorie à moins de 5 km pénalisée) et doublons homonymes supprimés.
   Chaque critère qui compte donne une raison affichée (« ≈ 15 min de La Fortuna (mer. 2 déc.) »).
+- **Régions** (`GET /trips/{id}/regions`, `planner::regions`) : pour savoir où aller. Lieux d'au
+  moins 2 langues, poids = langues^1,5 (un lieu célèbre l'emporte sur plusieurs obscurs).
+  Glouton : le lieu dont le voisinage de 25 km pèse le plus forme une région avec ce voisinage,
+  et ainsi de suite (12 régions au plus, poids minimal ≈ un lieu en 8 langues). Base : la
+  localité (`place=city|town|village`, 50 km) qui minimise la distance moyenne pondérée aux
+  lieux, divisée par 1 + ln(1 + hébergements à 2 km), favorisant les villes ; une localité ne sert
+  qu'une fois. Points forts (5, un volcan et son « Parque Nacional Volcán … » comptent pour un),
+  thèmes, nuits conseillées (visites des 6 premiers + 25 % de trajets, 1 à 4), lieux du voyage
+  déjà dans la région. « Ajouter ces lieux » ajoute les points forts manquants.
 - **Refus** : `trip_dismissed_suggestions`, partagé par le groupe (éditeurs), réinitialisable ;
   sujet temps réel `suggestions`. Les suggestions sont rechargées à tout changement du voyage.
-- **Interface** : onglet « Suggestions » (filtres, raisons, liens, Ajouter / Pas intéressé),
+- **Interface** : onglet « Suggestions » (régions à découvrir, ouvertes d'emblée sur un voyage
+  vide ; filtres, raisons, liens, Ajouter / Pas intéressé),
   marqueurs en pointillés sur la carte ; « Hébergements dans la zone » sous une zone d'hébergement,
   « Choisir » ajoute l'hôtel et remplace la zone en une fois.
 

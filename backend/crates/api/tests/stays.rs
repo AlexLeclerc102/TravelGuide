@@ -319,14 +319,16 @@ async fn stays_are_proposed_from_the_places_then_applied(db: PgPool) {
         .get(&format!("/api/v1/trips/{trip}/pois"), Some(&viewer))
         .await
         .body;
-    let areas: Vec<&str> = pois
+    let mut areas: Vec<&str> = pois
         .as_array()
         .unwrap()
         .iter()
         .filter(|p| p["placeholder"] == true)
         .map(|p| p["name"].as_str().unwrap())
         .collect();
-    assert_eq!(areas, vec!["San José", "La Fortuna"]);
+    // Créées dans la même transaction (même date de création) : ordre indifférent.
+    areas.sort();
+    assert_eq!(areas, vec!["La Fortuna", "San José"]);
 
     // Nuits hors du voyage : refus.
     let res = app

@@ -16,6 +16,7 @@ import { t } from '../../i18n/fr'
 import { poiLinks } from '../../lib/links'
 import { reasonText } from '../../lib/suggestions'
 import type { MapMarker } from '../MapView'
+import { RegionsSection } from './RegionsSection'
 
 const FILTERS: (Category | null)[] = [null, 'nature', 'sight', 'museum', 'activity', 'food']
 const external = { target: '_blank', rel: 'noopener noreferrer nofollow' } as const
@@ -38,6 +39,7 @@ export function SuggestionsPanel({ trip, pois, focusedId, onFocus, onMarkersChan
   const reset = useResetDismissals(trip.id)
   const canEdit = trip.my_role !== 'viewer'
   const list = data?.suggestions ?? []
+  const discovery = data?.status === 'discovery'
 
   useEffect(() => {
     onMarkersChange(
@@ -85,7 +87,8 @@ export function SuggestionsPanel({ trip, pois, focusedId, onFocus, onMarkersChan
         </p>
       )}
       {data?.status === 'not_imported' && <p className="notice small">{t.suggestions.notImported}</p>}
-      {data?.status === 'no_anchor' && <p className="notice small">{t.suggestions.noAnchor}</p>}
+      {data && <RegionsSection key={String(discovery)} trip={trip} pois={pois} canEdit={canEdit} defaultOpen={discovery} />}
+      {discovery && <p className="notice small">{t.suggestions.discovery}</p>}
       {data?.status === 'ready' && list.length === 0 && <p className="muted small">{t.suggestions.none}</p>}
 
       {list.length > 0 && (
@@ -104,7 +107,7 @@ export function SuggestionsPanel({ trip, pois, focusedId, onFocus, onMarkersChan
           ))}
         </ul>
       )}
-      {data?.status === 'ready' && (
+      {(data?.status === 'ready' || discovery) && (
         <p className="muted tiny">
           {t.suggestions.attribution}
           {canEdit && (

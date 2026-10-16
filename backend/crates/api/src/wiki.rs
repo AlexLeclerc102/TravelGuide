@@ -176,6 +176,15 @@ impl WikiService {
         result
     }
 
+    /// Comme [`Self::languages`] mais sans cache et en signalant les pannes (au plus 50
+    /// éléments) : pour la tâche de fond qui stocke la notoriété.
+    pub async fn fetch_languages(
+        &self,
+        qids: &[String],
+    ) -> Result<HashMap<String, u32>, WikiError> {
+        self.provider.languages(qids).await
+    }
+
     /// Présentation d'un lieu d'après ses tags (`wikipedia` au format OSM `langue:Titre`).
     pub async fn summary(
         &self,

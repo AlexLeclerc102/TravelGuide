@@ -57,13 +57,21 @@ async fn main() -> anyhow::Result<()> {
 
     let wiki = Arc::new(WikiService::new(Wikimedia::new(&config.user_agent())?));
 
-    // Lieux des suggestions : import en tâche de fond, l'API répond pendant ce temps.
+    // Lieux des suggestions : import en tâche de fond, l'API répond pendant ce temps ; puis
+    // notoriété Wikidata des lieux, rafraîchie chaque jour.
     match config.osm_extract.clone() {
         Some(path) => {
-            let db = db.clone();
+            let (db, wiki) = (db.clone(), wiki.clone());
             tokio::spawn(async move {
                 if let Err(e) = api::osm_import::import_if_changed(&db, &path).await {
                     tracing::warn!(error = ?e, "import des lieux OSM en échec");
+                }
+                loop {
+                    match api::notability::refresh(&db, &wiki).await {
+                        Ok(n) => tracing::info!(count = n, "notoriété Wikidata à jour"),
+                        Err(e) => tracing::warn!(error = ?e, "notoriété Wikidata en échec"),
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
                 }
             });
         }

@@ -76,6 +76,14 @@ async fn seed(app: &TestApp) {
             10.4700,
             -84.6500,
         ),
+        osm(
+            7,
+            "La Fortuna",
+            Category::Other,
+            "place=town",
+            10.4706,
+            -84.6453,
+        ),
     ];
     store(&app.db, "test", None, &places).await.unwrap();
 }
@@ -279,15 +287,135 @@ async fn lodging_around_a_stay_and_free_time(db: PgPool) {
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
 
+/// Notoriété stockée : Arenal (40 langues) et Corcovado (30 langues).
+async fn seed_notability(app: &TestApp) {
+    sqlx::raw_sql(
+        "UPDATE osm_places SET wikidata = 'Q1130598' WHERE osm_id = 5;
+         INSERT INTO wikidata_notability (qid, languages)
+         VALUES ('Q641588', 40), ('Q1130598', 30)",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
 #[sqlx::test(migrator = "api::MIGRATOR")]
-async fn nothing_to_search_around(db: PgPool) {
+async fn an_empty_trip_discovers_the_most_notable_places_of_the_country(db: PgPool) {
     let app = TestApp::new(db);
     let orga = app.register_organizer("orga@example.com", "Orga").await;
     let trip = app.create_trip(&orga, "Vide").await;
     seed(&app).await;
+    seed_notability(&app).await;
     let res = app
         .get(&format!("/api/v1/trips/{trip}/suggestions"), Some(&orga))
         .await;
-    assert_eq!(res.body["status"], "no_anchor");
-    assert_eq!(res.body["suggestions"], json!([]));
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    assert_eq!(res.body["status"], "discovery");
+    // Tout le pays, par notoriété (Corcovado, loin de tout, est proposé) ; ni restaurant, ni
+    // hôtel, ni localité, ni musée fermé.
+    assert_eq!(
+        names(&res.body),
+        vec!["Volcán Arenal", "Corcovado", "Catarata Río Fortuna"]
+    );
+    let first = &res.body["suggestions"][0];
+    assert_eq!(first["date"], Value::Null);
+    assert!(first["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["kind"] == "notable" && r["languages"] == 40));
+}
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn regions_group_notable_places_around_a_place_to_stay(db: PgPool) {
+    let app = TestApp::new(db);
+    let (orga, viewer, trip, _area) = setup(&app).await;
+    let uri = format!("/api/v1/trips/{trip}/regions");
+
+    seed(&app).await;
+    // Lieux importés, notoriété pas encore connue.
+    let res = app.get(&uri, Some(&viewer)).await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    assert_eq!(res.body["status"], "not_imported");
+
+    seed_notability(&app).await;
+    let res = app.get(&uri, Some(&viewer)).await;
+    assert_eq!(res.body["status"], "ready");
+    let regions = res.body["regions"].as_array().unwrap();
+    assert_eq!(regions.len(), 2, "{regions:?}");
+    // Nommée d'après la localité où loger ; le parc isolé, d'après lui-même.
+    assert_eq!(regions[0]["name"], "La Fortuna");
+    assert_eq!(regions[0]["highlights"][0]["name"], "Volcán Arenal");
+    assert_eq!(regions[0]["themes"], json!(["nature"]));
+    assert_eq!(regions[0]["nights"], 1);
+    assert_eq!(regions[1]["name"], "Corcovado");
+    assert_eq!(regions[1]["in_trip"], 0);
+
+    // Un lieu du voyage dans la région ; un point fort écarté disparaît.
+    app.post(
+        &format!("/api/v1/trips/{trip}/pois"),
+        json!({ "name": "Cascade", "category": "nature", "lat": 10.44, "lon": -84.67 }),
+        Some(&orga),
+    )
+    .await;
+    app.post(
+        &format!("/api/v1/trips/{trip}/suggestions/dismissals"),
+        json!({ "osm": { "type": "node", "id": 5 }, "category": "nature" }),
+        Some(&orga),
+    )
+    .await;
+    let res = app.get(&uri, Some(&viewer)).await;
+    let regions = res.body["regions"].as_array().unwrap();
+    assert_eq!(regions.len(), 1, "{regions:?}");
+    assert_eq!(regions[0]["in_trip"], 1);
+
+    // Voyage d'un autre groupe : 404.
+    let outsider = app.register("dehors@example.com", "Dehors").await;
+    let res = app.get(&uri, Some(&outsider)).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn notability_is_refreshed_in_the_background(db: PgPool) {
+    use std::sync::Arc;
+
+    use api::wiki::{StaticWiki, WikiService};
+
+    let app = TestApp::new(db);
+    seed(&app).await;
+    sqlx::query("UPDATE osm_places SET wikidata = 'Q1130598' WHERE osm_id = 5")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let mut wiki = StaticWiki::default();
+    wiki.language_counts.insert("Q641588".into(), 40);
+    let wiki = Arc::new(wiki);
+    let service = WikiService::new(wiki.clone());
+
+    // Corcovado est inconnu de Wikidata : 0 langue, mais stocké (pas redemandé).
+    assert_eq!(
+        api::notability::refresh(&app.db, &service).await.unwrap(),
+        2
+    );
+    let stored: Vec<(String, i32)> =
+        sqlx::query_as("SELECT qid, languages FROM wikidata_notability ORDER BY qid")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(stored, vec![("Q1130598".into(), 0), ("Q641588".into(), 40)]);
+    assert_eq!(
+        api::notability::refresh(&app.db, &service).await.unwrap(),
+        0
+    );
+
+    // Wikidata en panne : rien n'est écrit, rien n'échoue.
+    sqlx::query("DELETE FROM wikidata_notability")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    wiki.down.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        api::notability::refresh(&app.db, &service).await.unwrap(),
+        0
+    );
 }

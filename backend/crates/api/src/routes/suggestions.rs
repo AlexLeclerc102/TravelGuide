@@ -15,6 +15,7 @@ use crate::auth::CurrentUser;
 use crate::error::{AppResult, ErrorBody};
 use crate::places::{Category, OsmRef};
 use crate::realtime::{ClientId, Topic};
+use crate::regions::{self, Regions};
 use crate::state::AppState;
 use crate::suggest::{self, Request, Suggestions};
 use crate::trips::{self, Role};
@@ -22,6 +23,7 @@ use crate::trips::{self, Role};
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_suggestions))
+        .routes(routes!(list_regions))
         .routes(routes!(dismiss_suggestion, reset_dismissals))
 }
 
@@ -66,6 +68,29 @@ async fn list_suggestions(
     };
     Ok(Json(
         suggest::suggest(&state.db, &state.wiki, trip_id, current.user.id, request).await?,
+    ))
+}
+
+/// Régions du pays à découvrir : lieux notables regroupés autour d'une localité où loger,
+/// avec leurs points forts et les nuits conseillées. Données © contributeurs OpenStreetMap
+/// (ODbL) et Wikidata.
+#[utoipa::path(get, path = "/trips/{trip_id}/regions", tag = "suggestions",
+    params(("trip_id" = Uuid, Path)),
+    responses((status = 200, body = Regions), (status = 404, body = ErrorBody),
+        (status = 429, body = ErrorBody)))]
+async fn list_regions(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(trip_id): Path<Uuid>,
+) -> AppResult<Json<Regions>> {
+    trips::require_role(&state.db, trip_id, current.user.id, Role::Viewer).await?;
+    state.rate_limiter.check(
+        &format!("regions:{}", current.user.id),
+        PER_USER_PER_MINUTE,
+        Duration::from_secs(60),
+    )?;
+    Ok(Json(
+        regions::regions(&state.db, trip_id, current.user.id).await?,
     ))
 }
 

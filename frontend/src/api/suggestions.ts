@@ -20,7 +20,8 @@ export interface Suggestion {
   reasons: SuggestionReason[]
 }
 
-export type SuggestionStatus = 'ready' | 'not_imported' | 'no_anchor'
+/** `discovery` : voyage encore vide, les lieux les plus notables de tout le pays. */
+export type SuggestionStatus = 'ready' | 'not_imported' | 'discovery'
 
 export interface Suggestions {
   status: SuggestionStatus
@@ -30,10 +31,39 @@ export interface Suggestions {
 /** Lieux à visiter (d'une catégorie), ou hébergements autour d'un lieu du voyage. */
 export type SuggestionFilter = { category: Category | null } | { lodgingNear: string }
 
+/** Région du pays à découvrir (voir `planner::regions`). */
+export interface Region {
+  /** Localité où loger. */
+  name: string
+  lat: number
+  lon: number
+  osm: OsmRef | null
+  themes: Category[]
+  nights: number
+  place_count: number
+  highlights: Place[]
+  /** Lieux du voyage déjà dans la région. */
+  in_trip: number
+}
+
+export interface Regions {
+  status: 'ready' | 'not_imported'
+  regions: Region[]
+}
+
 export const suggestionKeys = {
   all: (tripId: string) => [...tripKeys.one(tripId), 'suggestions'] as const,
   list: (tripId: string, filter: SuggestionFilter) => [...suggestionKeys.all(tripId), filter] as const,
+  regions: (tripId: string) => [...suggestionKeys.all(tripId), 'regions'] as const,
 }
+
+export const useRegions = (tripId: string, enabled = true) =>
+  useQuery({
+    queryKey: suggestionKeys.regions(tripId),
+    queryFn: () => apiFetch<Regions>(`/trips/${tripId}/regions`),
+    enabled,
+    staleTime: 5 * 60_000,
+  })
 
 /** Identifiant stable d'une suggestion (objet OSM). */
 export const suggestionId = (s: Suggestion) => (s.place.osm ? `s:${s.place.osm.type}/${s.place.osm.id}` : `s:${s.place.name}`)

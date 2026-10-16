@@ -8,5 +8,6 @@ pub mod geo;
 pub mod itinerary;
 pub mod ratings;
 pub mod recommend;
+pub mod regions;
 pub mod stays;
 pub mod travel;

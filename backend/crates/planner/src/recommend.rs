@@ -36,6 +36,8 @@ const DIVERSITY_PENALTY: f64 = 8.0;
 const DIVERSITY_RADIUS_M: f64 = 5_000.0;
 /// Deux lieux homonymes à moins de 1 km sont considérés comme le même.
 const DUPLICATE_RADIUS_M: f64 = 1_000.0;
+/// Plafond de la pénalité de catégorie : varier sans faire remonter des lieux obscurs.
+pub const SPREAD_MAX: f64 = 5.0;
 
 const W_PROXIMITY: f64 = 30.0;
 const W_NOTABILITY: f64 = 25.0;
@@ -82,6 +84,9 @@ pub struct Context {
     pub in_trip: HashMap<usize, usize>,
     /// Suggestions écartées par le groupe, par catégorie.
     pub dismissed: HashMap<usize, usize>,
+    /// Pénalité par lieu de même catégorie déjà retenu, où qu'il soit, plafonnée à
+    /// [`SPREAD_MAX`] (0 : seulement les voisins, voir [`DIVERSITY_RADIUS_M`]).
+    pub spread_penalty: f64,
 }
 
 /// Raison affichée à côté d'une suggestion.
@@ -211,15 +216,17 @@ pub fn recommend(candidates: &[Candidate], ctx: &Context, limit: usize) -> Vec<S
     while picked.len() < limit {
         let adjusted = |s: &Scored| {
             let c = &candidates[s.index];
-            let near_same = picked
+            let same = picked
                 .iter()
-                .filter(|p| {
-                    let o = &candidates[p.index];
-                    o.category == c.category
-                        && haversine_m(o.location, c.location) < DIVERSITY_RADIUS_M
-                })
-                .count();
-            s.score - DIVERSITY_PENALTY * near_same as f64
+                .map(|p| &candidates[p.index])
+                .filter(|o| o.category == c.category);
+            let (all, near) = same.fold((0, 0), |(all, near), o| {
+                let close = haversine_m(o.location, c.location) < DIVERSITY_RADIUS_M;
+                (all + 1, near + usize::from(close))
+            });
+            s.score
+                - DIVERSITY_PENALTY * near as f64
+                - (ctx.spread_penalty * all as f64).min(SPREAD_MAX)
         };
         let best = pool
             .iter()
@@ -370,6 +377,37 @@ mod tests {
         let out = recommend(&all, &ctx(None), 2);
         assert_eq!(out.len(), 2);
         assert!(out.iter().any(|s| s.index == 3), "{out:?}");
+    }
+
+    #[test]
+    fn spread_penalty_varies_categories_country_wide() {
+        // Parcs très connus, loin les uns des autres, et un musée un peu moins connu.
+        let mut all: Vec<Candidate> = (0..4)
+            .map(|i| {
+                let mut c = cand(
+                    LatLon::new(8.5 + f64::from(i), -84.0),
+                    NATURE,
+                    &format!("Parc {i}"),
+                );
+                c.languages = 40;
+                c
+            })
+            .collect();
+        let mut museum = cand(SAN_JOSE, FOOD, "Museo");
+        museum.languages = 30;
+        all.push(museum);
+        let rank = |spread| {
+            let c = Context {
+                spread_penalty: spread,
+                ..Default::default()
+            };
+            recommend(&all, &c, 5)
+                .iter()
+                .position(|s| s.index == 4)
+                .unwrap()
+        };
+        assert_eq!(rank(0.0), 4);
+        assert!(rank(1.0) < 4);
     }
 
     #[test]

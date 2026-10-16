@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Place, Poi } from '../api/pois'
-import type { Suggestion, Suggestions } from '../api/suggestions'
+import type { Regions, Suggestion, Suggestions } from '../api/suggestions'
 import { demoUser, mockApi, renderApp } from '../test/utils'
 
 vi.mock('../components/MapView', () => ({
@@ -110,6 +110,7 @@ function routes(role: string, suggestions: () => Suggestions, extra: Parameters<
       ],
     }),
     'GET /trips/trip-1/suggestions': () => ({ status: 200, body: suggestions() }),
+    'GET /trips/trip-1/regions': () => ({ status: 200, body: { status: 'ready', regions: [] } satisfies Regions }),
     ...extra,
   }
 }
@@ -167,14 +168,64 @@ describe('suggestions', () => {
     expect(bodies.dismissal).toEqual({ osm: { type: 'node', id: 3 }, category: 'food' })
   })
 
-  it('explique pourquoi il n’y a rien à proposer', async () => {
-    let status: Suggestions['status'] = 'no_anchor'
-    mockApi(routes('editor', () => ({ status, suggestions: [] })))
+  it('voyage vide : découverte du pays, puis import en cours', async () => {
+    let status: Suggestions['status'] = 'discovery'
+    mockApi(routes('editor', () => ({ status, suggestions: status === 'discovery' ? [arenal] : [] })))
     await openSuggestions()
-    expect(await screen.findByText(/Ajoutez un hébergement/)).toBeInTheDocument()
+    expect(await screen.findByText(/les lieux les plus réputés de tout le pays/)).toBeInTheDocument()
+    expect(screen.getByText('Volcán Arenal')).toBeInTheDocument()
+    // Les régions sont ouvertes d'emblée.
+    expect(screen.getByText('Régions à découvrir').closest('details')).toHaveAttribute('open')
     status = 'not_imported'
     fireEvent.click(screen.getByRole('radio', { name: 'Nature' }))
     expect(await screen.findByText(/en cours d’import/)).toBeInTheDocument()
+  })
+
+  it('propose des régions et en ajoute les points forts', async () => {
+    const added: string[] = []
+    const regions: Regions = {
+      status: 'ready',
+      regions: [
+        {
+          name: 'La Fortuna',
+          lat: 10.47,
+          lon: -84.64,
+          osm: { type: 'node', id: 7 },
+          themes: ['nature', 'activity'],
+          nights: 2,
+          place_count: 4,
+          highlights: [
+            place(1, 'Volcán Arenal', { wikipedia: 'en:Arenal Volcano' }),
+            place(2, 'Catarata Río Fortuna', { osm_tag: 'waterway=waterfall' }),
+          ],
+          in_trip: 1,
+        },
+      ],
+    }
+    let pois: Poi[] = [fortuna]
+    mockApi(
+      routes('editor', () => ({ status: 'discovery', suggestions: [] }), {
+        'GET /trips/trip-1/pois': () => ({ status: 200, body: pois }),
+        'GET /trips/trip-1/regions': () => ({ status: 200, body: regions }),
+        'POST /trips/trip-1/pois': (init) => {
+          const body = JSON.parse(String(init?.body))
+          added.push(body.name)
+          const poi: Poi = { ...fortuna, id: `p${added.length}`, name: body.name, category: 'nature', placeholder: false, osm: body.osm }
+          pois = [...pois, poi]
+          return { status: 201, body: poi }
+        },
+      }),
+    )
+    await openSuggestions()
+    const card = (await screen.findByText('La Fortuna', { selector: 'strong' })).closest('li')!
+    expect(within(card).getByText('2 nuits conseillées · Nature, Activité')).toBeInTheDocument()
+    expect(within(card).getByText('1 lieu du voyage')).toBeInTheDocument()
+    expect(within(card).getByText('et 2 autres lieux notables')).toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'Volcán Arenal' })).toHaveAttribute('href', 'https://en.wikipedia.org/wiki/Arenal_Volcano')
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Ajouter les points forts de La Fortuna' }))
+    await waitFor(() => expect(within(card).getByRole('button', { name: /La Fortuna/ })).toHaveTextContent('Points forts ajoutés'))
+    expect(added).toEqual(['Volcán Arenal', 'Catarata Río Fortuna'])
   })
 
   it('choisit un hôtel de la zone : ajouté puis à la place de la zone', async () => {

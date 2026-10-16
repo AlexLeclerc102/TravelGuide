@@ -6,7 +6,7 @@
 //! catégorie), de l'itinéraire (temps libre par jour), de la notoriété Wikipédia et des
 //! suggestions écartées.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use planner::geo::LatLon;
 use planner::itinerary::fastest_mode;
@@ -30,6 +30,10 @@ use crate::wiki::WikiService;
 const LIMIT: usize = 30;
 /// Candidats examinés au plus (les plus proches d'abord).
 const MAX_CANDIDATES: i64 = 2_000;
+/// Candidats examinés en découverte du pays (les plus notables d'abord).
+const MAX_DISCOVERY_CANDIDATES: i64 = 500;
+/// Pénalité par lieu de même catégorie déjà retenu, en découverte du pays.
+const DISCOVERY_SPREAD: f64 = 1.0;
 /// Nombre d'avis du groupe sur une catégorie pour en déduire ses goûts.
 const TASTE_MIN_REVIEWS: i64 = 2;
 
@@ -74,8 +78,8 @@ pub enum SuggestionStatus {
     Ready,
     /// Les lieux OSM ne sont pas (encore) importés.
     NotImported,
-    /// Ni hébergement ni lieu dans le voyage : rien autour de quoi chercher.
-    NoAnchor,
+    /// Ni hébergement ni lieu dans le voyage : les lieux les plus notables de tout le pays.
+    Discovery,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -109,6 +113,8 @@ struct OsmRow {
     email: Option<String>,
     wikidata: Option<String>,
     wikipedia: Option<String>,
+    /// Notoriété déjà connue (`wikidata_notability`).
+    languages: Option<i32>,
 }
 
 fn location(p: &Poi) -> LatLon {
@@ -231,29 +237,43 @@ pub async fn suggest(
         }
     };
     let all_anchors: Vec<LatLon> = day_anchors.iter().flat_map(|d| d.anchors.clone()).collect();
-    if all_anchors.is_empty() {
-        return Ok(empty(SuggestionStatus::NoAnchor));
-    }
+    // Rien autour de quoi chercher : découverte de tout le pays, par notoriété.
+    let discovery = all_anchors.is_empty();
     let widest = day_anchors
         .iter()
         .map(|d| radius_m(d.mode, lodging))
         .fold(0.0, f64::max);
 
-    // Candidats autour des points de départ, hors lieux du voyage et suggestions écartées.
+    // Candidats autour des points de départ (ou les plus notables), hors lieux du voyage et
+    // suggestions écartées.
     let category_filter: Option<&str> = match request {
         Request::Places(c) => c.map(Category::as_str),
         Request::LodgingNear(_) => Some("lodging"),
     };
-    let rows: Vec<OsmRow> = sqlx::query_as(
+    let (area, order) = if discovery {
+        (
+            "true",
+            "coalesce(n.languages, 0) DESC, (o.wikidata IS NOT NULL) DESC",
+        )
+    } else {
+        (
+            "ST_DWithin(o.location, anchors.g, $3)",
+            "ST_Distance(o.location, anchors.g)",
+        )
+    };
+    let rows: Vec<OsmRow> = sqlx::query_as(&format!(
         "WITH anchors AS (
              SELECT ST_Collect(ST_SetSRID(ST_MakePoint(lo, la), 4326))::geography AS g
              FROM UNNEST($1::float8[], $2::float8[]) AS a(lo, la)
          )
          SELECT o.osm_type, o.osm_id, o.name, o.category, o.osm_tag,
                 ST_Y(o.location::geometry) AS lat, ST_X(o.location::geometry) AS lon,
-                o.opening_hours, o.website, o.phone, o.email, o.wikidata, o.wikipedia
-         FROM osm_places o, anchors
-         WHERE ST_DWithin(o.location, anchors.g, $3)
+                o.opening_hours, o.website, o.phone, o.email, o.wikidata, o.wikipedia,
+                n.languages
+         FROM osm_places o
+         CROSS JOIN anchors
+         LEFT JOIN wikidata_notability n ON n.qid = o.wikidata
+         WHERE {area}
            AND ($4::text IS NULL OR o.category = $4)
            AND ($5 OR o.category <> 'lodging')
            AND ($4::text IS NOT NULL OR o.category <> 'food')
@@ -262,21 +282,30 @@ pub async fn suggest(
                            AND p.osm_type = o.osm_type AND p.osm_id = o.osm_id)
            AND NOT EXISTS (SELECT 1 FROM trip_dismissed_suggestions d WHERE d.trip_id = $6
                            AND d.osm_type = o.osm_type AND d.osm_id = o.osm_id)
-         ORDER BY ST_Distance(o.location, anchors.g), o.osm_type, o.osm_id
-         LIMIT $7",
-    )
+         ORDER BY {order}, o.osm_type, o.osm_id
+         LIMIT $7"
+    ))
     .bind(all_anchors.iter().map(|a| a.lon).collect::<Vec<_>>())
     .bind(all_anchors.iter().map(|a| a.lat).collect::<Vec<_>>())
     .bind(widest)
     .bind(category_filter)
     .bind(lodging)
     .bind(trip_id)
-    .bind(MAX_CANDIDATES)
+    .bind(if discovery {
+        MAX_DISCOVERY_CANDIDATES
+    } else {
+        MAX_CANDIDATES
+    })
     .fetch_all(db)
     .await?;
 
-    let qids: Vec<String> = rows.iter().filter_map(|r| r.wikidata.clone()).collect();
-    let languages = wiki.languages(&qids).await;
+    // Notoriété : stockée, sinon demandée à la volée (lieux pas encore rafraîchis).
+    let unknown: Vec<String> = rows
+        .iter()
+        .filter(|r| r.languages.is_none())
+        .filter_map(|r| r.wikidata.clone())
+        .collect();
+    let languages = wiki.languages(&unknown).await;
     // Pays le plus fréquent parmi les lieux du voyage (jours fériés des horaires).
     let country = {
         let mut counts: HashMap<&str, usize> = HashMap::new();
@@ -291,7 +320,13 @@ pub async fn suggest(
 
     let mut places = Vec::with_capacity(rows.len());
     let mut candidates = Vec::with_capacity(rows.len());
+    // Un même élément Wikidata porté par plusieurs objets OSM (parc en `boundary=national_park`
+    // et `protected_area`…) : le premier (le plus proche ou le plus notable) seulement.
+    let mut seen = HashSet::new();
     for r in rows {
+        if r.wikidata.as_ref().is_some_and(|q| !seen.insert(q.clone())) {
+            continue;
+        }
         let category: Category = r.category.parse()?;
         let closed_all_days = match opening::parse(r.opening_hours.as_deref(), country.as_deref()) {
             opening::Parsed::Valid(oh) => {
@@ -309,12 +344,16 @@ pub async fn suggest(
             category: category_index(category),
             name_key: r.name.trim().to_lowercase(),
             duration_s: category.default_duration_min().max(0) as u32 * 60,
-            languages: r
-                .wikidata
-                .as_ref()
-                .and_then(|q| languages.get(q))
-                .copied()
-                .unwrap_or(0),
+            languages: r.languages.map_or_else(
+                || {
+                    r.wikidata
+                        .as_ref()
+                        .and_then(|q| languages.get(q))
+                        .copied()
+                        .unwrap_or(0)
+                },
+                |n| n.max(0) as u32,
+            ),
             completeness: known.iter().filter(|&&k| k).count() as f64 / known.len() as f64,
             closed_all_days,
         });
@@ -342,6 +381,8 @@ pub async fn suggest(
     // Goûts du groupe, saturation et refus, par catégorie.
     let mut ctx = Context {
         days: day_anchors,
+        // Sans proximité pour départager, varier les catégories (pas que des parcs nationaux).
+        spread_penalty: if discovery { DISCOVERY_SPREAD } else { 0.0 },
         ..Default::default()
     };
     if !lodging {
@@ -413,7 +454,11 @@ pub async fn suggest(
         })
         .collect();
     Ok(Suggestions {
-        status: SuggestionStatus::Ready,
+        status: if discovery {
+            SuggestionStatus::Discovery
+        } else {
+            SuggestionStatus::Ready
+        },
         suggestions,
     })
 }
