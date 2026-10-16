@@ -226,6 +226,45 @@ impl RoutingService {
         Ok(())
     }
 
+    /// Paires de `points` reliées par la route (`links[i][j]`). `None` : on ne sait pas (pas
+    /// de moteur, ou moteur en panne). Aucun chemin, ou trop loin pour le moteur : `false`.
+    /// Une ligne par requête ; Valhalla faisant échouer toute la requête dès qu'une paire est
+    /// sans chemin (ou trop longue), une ligne en échec est reprise paire par paire.
+    pub async fn road_links(&self, points: &[LatLon]) -> Option<Vec<Vec<bool>>> {
+        let provider = self.provider.as_ref()?;
+        let unknown = |e| {
+            self.note_failure(e);
+            None
+        };
+        let mut links = Vec::with_capacity(points.len());
+        for (i, &from) in points.iter().enumerate() {
+            let row = match provider.matrix(Mode::Car, &[from], points).await {
+                Ok(rows) => rows
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(Option::is_some)
+                    .collect(),
+                Err(RoutingError::NoPath) => {
+                    let mut row = vec![false; points.len()];
+                    for (j, &to) in points.iter().enumerate() {
+                        row[j] = i == j
+                            || match provider.matrix(Mode::Car, &[from], &[to]).await {
+                                Ok(r) => r.iter().flatten().any(Option::is_some),
+                                Err(RoutingError::NoPath) => false,
+                                Err(e) => return unknown(e),
+                            };
+                    }
+                    row
+                }
+                Err(e) => return unknown(e),
+            };
+            links.push(row);
+        }
+        Some(links)
+    }
+
     /// Journalise une panne du moteur ; renvoie `true` (moteur considéré hors service
     /// pour le reste de la requête, afin de ne pas cumuler les délais d'attente).
     fn note_failure(&self, e: RoutingError) -> bool {
@@ -315,6 +354,9 @@ pub struct StaticRouter {
     pub down: AtomicBool,
     /// Comme Valhalla : une source sans route fait échouer toute la matrice (`NoPath`).
     pub source_no_path: bool,
+    /// Comme Valhalla au-delà de sa distance maximale : toute paire sans chemin fait échouer
+    /// la matrice.
+    pub any_no_path: bool,
     pub max_pairs: usize,
     pub max_points: usize,
 }
@@ -325,6 +367,7 @@ impl Default for StaticRouter {
             calls: AtomicUsize::new(0),
             down: AtomicBool::new(false),
             source_no_path: false,
+            any_no_path: false,
             max_pairs: 2_500,
             max_points: 20,
         }
@@ -368,6 +411,9 @@ impl RoutingProvider for std::sync::Arc<StaticRouter> {
         self.enter()?;
         assert!(mode.is_routed() && sources.len() * targets.len() <= self.max_pairs);
         if self.source_no_path && sources.iter().any(|s| s.lat < 0.0) {
+            return Err(RoutingError::NoPath);
+        }
+        if self.any_no_path && sources.iter().chain(targets).any(|p| p.lat < 0.0) {
             return Err(RoutingError::NoPath);
         }
         Ok(sources
@@ -472,6 +518,32 @@ mod tests {
         assert_eq!(m[1][2].source, LegSource::Router);
         assert_eq!(m[2][1].source, LegSource::Router);
         assert_eq!(router.calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn road_links_survive_a_request_failing_for_one_pair() {
+        let router = Arc::new(StaticRouter {
+            any_no_path: true,
+            ..Default::default()
+        });
+        let svc = service(&router);
+        let links = svc.road_links(&[SAN_JOSE, NOWHERE, FORTUNA]).await.unwrap();
+        assert_eq!(
+            links,
+            vec![
+                vec![true, false, true],
+                vec![false, true, false],
+                vec![true, false, true],
+            ]
+        );
+        router.down.store(true, Ordering::SeqCst);
+        assert_eq!(svc.road_links(&[SAN_JOSE, FORTUNA]).await, None);
+        assert_eq!(
+            RoutingService::straight_line_only()
+                .road_links(&[SAN_JOSE])
+                .await,
+            None
+        );
     }
 
     #[tokio::test]

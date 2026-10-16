@@ -90,7 +90,7 @@ async fn list_regions(
         Duration::from_secs(60),
     )?;
     Ok(Json(
-        regions::regions(&state.db, trip_id, current.user.id).await?,
+        regions::regions(&state.db, &state.routing, trip_id, current.user.id).await?,
     ))
 }
 

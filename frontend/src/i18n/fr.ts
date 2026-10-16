@@ -262,6 +262,8 @@ export const fr = {
     notImported: 'Les lieux et leur notoriété sont en cours de préparation sur le serveur : réessayez dans quelques minutes.',
     none: 'Aucune région à proposer.',
     nights: (n: number) => (n > 1 ? `${n} nuits conseillées` : '1 nuit conseillée'),
+    expedition: 'Expédition de plusieurs jours',
+    boatOrPlane: '⛴ Accessible uniquement en bateau ou en avion : aucune route depuis le reste du pays. Se prépare comme une expédition (traversée, excursion organisée), en plus des autres étapes.',
     inTrip: (n: number) => (n > 1 ? `${n} lieux du voyage` : '1 lieu du voyage'),
     more: (n: number) => (n > 1 ? `et ${n} autres lieux notables` : 'et 1 autre lieu notable'),
     add: (n: number) => (n > 1 ? `Ajouter ces ${n} lieux` : 'Ajouter ce lieu'),

@@ -350,6 +350,8 @@ async fn regions_group_notable_places_around_a_place_to_stay(db: PgPool) {
     assert_eq!(regions[0]["nights"], 1);
     assert_eq!(regions[1]["name"], "Corcovado");
     assert_eq!(regions[1]["in_trip"], 0);
+    // Une seule base connue : rien à quoi la relier.
+    assert_eq!(regions[0]["access"], "unknown");
 
     // Un lieu du voyage dans la région ; un point fort écarté disparaît.
     app.post(
@@ -373,6 +375,57 @@ async fn regions_group_notable_places_around_a_place_to_stay(db: PgPool) {
     let outsider = app.register("dehors@example.com", "Dehors").await;
     let res = app.get(&uri, Some(&outsider)).await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn regions_without_road_access_are_reached_by_boat_or_plane(db: PgPool) {
+    let app = TestApp::new(db);
+    let orga = app.register_organizer("orga@example.com", "Orga").await;
+    let trip = app.create_trip(&orga, "Vide").await;
+    seed(&app).await;
+    seed_notability(&app).await;
+    // Une localité près de Corcovado, et une île très connue (sans route : le faux moteur
+    // ne relie rien à l'hémisphère sud).
+    sqlx::raw_sql(
+        "INSERT INTO osm_places (osm_type, osm_id, name, category, osm_tag, location, wikidata)
+         VALUES ('node', 20, 'Puerto Jiménez', 'other', 'place=town',
+                 ST_SetSRID(ST_MakePoint(-83.30, 8.535), 4326)::geography, NULL),
+                ('node', 21, 'Isla Lejana', 'nature', 'natural=beach',
+                 ST_SetSRID(ST_MakePoint(-90.31, -0.75), 4326)::geography, 'Q999'),
+                ('node', 22, 'Puerto Isla', 'other', 'place=village',
+                 ST_SetSRID(ST_MakePoint(-90.30, -0.74), 4326)::geography, NULL);
+         INSERT INTO wikidata_notability (qid, languages) VALUES ('Q999', 59);",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let uri = format!("/api/v1/trips/{trip}/regions");
+    let res = app.get(&uri, Some(&orga)).await;
+    let access: Vec<(&str, &str)> = res.body["regions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["name"].as_str().unwrap(), r["access"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        access,
+        vec![
+            ("Puerto Isla", "boat_or_plane"),
+            ("La Fortuna", "road"),
+            ("Puerto Jiménez", "road"),
+        ]
+    );
+
+    // Moteur de routage en panne : on ne sait pas (rien n'est affirmé).
+    app.routing
+        .down
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let res = app.get(&uri, Some(&orga)).await;
+    assert!(res.body["regions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r["access"] == "unknown"));
 }
 
 #[sqlx::test(migrator = "api::MIGRATOR")]

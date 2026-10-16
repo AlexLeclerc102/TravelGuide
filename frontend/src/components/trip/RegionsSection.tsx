@@ -71,10 +71,12 @@ function RegionCard({ trip, region: r, pois, canEdit }: { trip: Trip; region: Re
       <div className="region-head">
         <strong>{r.name}</strong>
         <span className="muted small">
-          {t.regions.nights(r.nights)} · {r.themes.map((c) => t.categories[c]).join(', ')}
+          {r.access === 'boat_or_plane' ? t.regions.expedition : t.regions.nights(r.nights)} ·{' '}
+          {r.themes.map((c) => t.categories[c]).join(', ')}
         </span>
         {r.in_trip > 0 && <span className="tag tag-in-trip">{t.regions.inTrip(r.in_trip)}</span>}
       </div>
+      {r.access === 'boat_or_plane' && <p className="notice small">{t.regions.boatOrPlane}</p>}
       <ul className="small region-highlights">
         {r.highlights.map((h) => {
           const wiki = poiLinks({ ...h, address: '' }).find((l) => l.kind === 'wikipedia')

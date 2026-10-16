@@ -193,12 +193,25 @@ describe('suggestions', () => {
           osm: { type: 'node', id: 7 },
           themes: ['nature', 'activity'],
           nights: 2,
+          access: 'road',
           place_count: 4,
           highlights: [
             place(1, 'Volcán Arenal', { wikipedia: 'en:Arenal Volcano' }),
             place(2, 'Catarata Río Fortuna', { osm_tag: 'waterway=waterfall' }),
           ],
           in_trip: 1,
+        },
+        {
+          name: 'Base Wafer',
+          lat: 5.54,
+          lon: -87.06,
+          osm: { type: 'node', id: 8 },
+          themes: ['nature'],
+          nights: 1,
+          access: 'boat_or_plane',
+          place_count: 1,
+          highlights: [place(9, 'Isla del Coco')],
+          in_trip: 0,
         },
       ],
     }
@@ -222,6 +235,13 @@ describe('suggestions', () => {
     expect(within(card).getByText('1 lieu du voyage')).toBeInTheDocument()
     expect(within(card).getByText('et 2 autres lieux notables')).toBeInTheDocument()
     expect(within(card).getByRole('link', { name: 'Volcán Arenal' })).toHaveAttribute('href', 'https://en.wikipedia.org/wiki/Arenal_Volcano')
+
+    expect(within(card).queryByText(/bateau/)).not.toBeInTheDocument()
+    // Une île sans route : dit clairement, sans nuits conseillées trompeuses.
+    const island = screen.getByText('Base Wafer', { selector: 'strong' }).closest('li')!
+    expect(within(island).getByText(/Accessible uniquement en bateau ou en avion/)).toBeInTheDocument()
+    expect(within(island).getByText(/Expédition de plusieurs jours/)).toBeInTheDocument()
+    expect(within(island).queryByText(/nuit conseillée/)).not.toBeInTheDocument()
 
     fireEvent.click(within(card).getByRole('button', { name: 'Ajouter les points forts de La Fortuna' }))
     await waitFor(() => expect(within(card).getByRole('button', { name: /La Fortuna/ })).toHaveTextContent('Points forts ajoutés'))

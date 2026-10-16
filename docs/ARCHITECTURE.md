@@ -230,6 +230,11 @@
   qu'une fois. Points forts (5, un volcan et son « Parque Nacional Volcán … » comptent pour un),
   thèmes, nuits conseillées (visites des 6 premiers + 25 % de trajets, 1 à 4), lieux du voyage
   déjà dans la région. « Ajouter ces lieux » ajoute les points forts manquants.
+  **Accès** : les bases reliées par la route (Valhalla, voiture, une ligne de matrice par base,
+  reprise paire par paire quand une paire fait échouer la requête) forment des groupes ; le plus
+  grand est le réseau du pays, les autres sont `boat_or_plane` (île Cocos : « Expédition de
+  plusieurs jours », sans nuits conseillées). Sans moteur ou en panne : `unknown`. ~0,7 s pour
+  12 régions.
 - **Refus** : `trip_dismissed_suggestions`, partagé par le groupe (éditeurs), réinitialisable ;
   sujet temps réel `suggestions`. Les suggestions sont rechargées à tout changement du voyage.
 - **Interface** : onglet « Suggestions » (régions à découvrir, ouvertes d'emblée sur un voyage

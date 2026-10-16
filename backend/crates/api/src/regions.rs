@@ -3,6 +3,9 @@
 //! Les lieux importés dont l'article Wikipédia existe dans plusieurs langues sont regroupés
 //! par [`planner::regions`] ; chaque région est nommée d'après la localité où loger
 //! ([`regions::best_base`]) et présentée avec ses points forts, prêts à être ajoutés.
+//!
+//! L'accès est vérifié avec le moteur de routage : une base qu'aucune route ne relie au réseau
+//! des autres (île Cocos…) se rejoint en bateau ou en avion, ce que la fiche dit clairement.
 
 use planner::geo::{haversine_m, LatLon};
 use planner::regions::{self, Settlement, Spot, RADIUS_M};
@@ -15,6 +18,7 @@ use uuid::Uuid;
 use crate::error::AppResult;
 use crate::places::{Category, OsmRef, OsmType, Place};
 use crate::pois;
+use crate::routing::RoutingService;
 use crate::trips;
 
 /// Langues Wikipédia minimales pour compter comme lieu notable.
@@ -24,6 +28,17 @@ const HIGHLIGHTS: usize = 5;
 /// Rayon de recherche de la localité où loger : plus large que la région, car le centre d'un
 /// grand parc (centre de son emprise) peut tomber loin de tout, voire en mer pour un parc marin.
 const BASE_SEARCH_M: f64 = 2.0 * RADIUS_M;
+
+/// Comment on rejoint une région.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Access {
+    Road,
+    /// Aucune route jusqu'au réseau des autres régions : bateau ou avion (île Cocos…).
+    BoatOrPlane,
+    /// Pas de moteur de routage, moteur en panne, ou région sans localité où loger.
+    Unknown,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -43,8 +58,9 @@ pub struct Region {
     pub osm: Option<OsmRef>,
     /// Catégories dominantes, de la plus à la moins représentée.
     pub themes: Vec<Category>,
-    /// Nuits conseillées pour en voir les points forts.
+    /// Nuits conseillées pour en voir les points forts (sans les trajets pour y aller).
     pub nights: u32,
+    pub access: Access,
     /// Lieux notables de la région.
     pub place_count: usize,
     /// Les plus notables, prêts à être ajoutés au voyage.
@@ -156,7 +172,12 @@ fn seconds(t: Time) -> u32 {
     u32::from(t.hour()) * 3600 + u32::from(t.minute()) * 60
 }
 
-pub async fn regions(db: &PgPool, trip_id: Uuid, user_id: Uuid) -> AppResult<Regions> {
+pub async fn regions(
+    db: &PgPool,
+    routing: &RoutingService,
+    trip_id: Uuid,
+    user_id: Uuid,
+) -> AppResult<Regions> {
     let trip = trips::get_for_user(db, trip_id, user_id).await?;
     // Un même élément Wikidata peut être porté par plusieurs objets OSM (parc national en
     // `boundary` et en `leisure`…) : un seul compte.
@@ -266,6 +287,12 @@ pub async fn regions(db: &PgPool, trip_id: Uuid, user_id: Uuid) -> AppResult<Reg
                 .take(3)
                 .collect(),
             nights: region.nights,
+            // Vérifié une fois toutes les bases connues.
+            access: if osm.is_some() {
+                Access::Road
+            } else {
+                Access::Unknown
+            },
             place_count: region.members.len(),
             highlights,
             in_trip: visits
@@ -273,6 +300,31 @@ pub async fn regions(db: &PgPool, trip_id: Uuid, user_id: Uuid) -> AppResult<Reg
                 .filter(|&&v| haversine_m(v, region.center) <= RADIUS_M)
                 .count(),
         });
+    }
+    // Accès : les bases reliées entre elles par la route forment des groupes ; le plus grand
+    // est le réseau routier du pays, les autres (îles…) se rejoignent en bateau ou en avion.
+    let bases: Vec<usize> = (0..out.len())
+        .filter(|&i| out[i].access == Access::Road)
+        .collect();
+    let points: Vec<LatLon> = bases
+        .iter()
+        .map(|&i| LatLon::new(out[i].lat, out[i].lon))
+        .collect();
+    let access = match routing.road_links(&points).await {
+        Some(links) if points.len() >= 2 => regions::road_groups(&links)
+            .into_iter()
+            .map(|main| {
+                if main {
+                    Access::Road
+                } else {
+                    Access::BoatOrPlane
+                }
+            })
+            .collect(),
+        _ => vec![Access::Unknown; bases.len()],
+    };
+    for (&i, a) in bases.iter().zip(access) {
+        out[i].access = a;
     }
     Ok(Regions {
         status: RegionStatus::Ready,

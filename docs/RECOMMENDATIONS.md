@@ -28,8 +28,9 @@ compléter un voyage déjà ébauché.
    - Fiche par région : points forts, thèmes dominants, nuits conseillées, lieux du voyage
      déjà dedans. « Ajouter ces lieux » ajoute les points forts au voyage ; les suggestions de
      proximité et « Où dormir ? » prennent ensuite le relais.
-   - Limites constatées sur le Costa Rica : l'île Cocos (expédition en bateau) arrive en tête ;
-     le centre d'une relation est celui de son emprise (parc marin : en mer), d'où des bases
+   - Accès vérifié avec Valhalla : une région hors du réseau routier principal (île Cocos) est
+     présentée comme une expédition en bateau ou en avion, pas déclassée.
+   - Limites constatées sur le Costa Rica : le centre d'une relation est celui de son emprise (parc marin : en mer), d'où des bases
      parfois éloignées (La Amistad → Cahuita) ; Monteverde manque (ses réserves n'ont pas de tag
      `wikidata` dans OSM). Pistes : point représentatif des relations, accessibilité, lier les
      lieux sans tag à Wikidata par nom et position, signaux de l'étape 5.

@@ -39,7 +39,10 @@ export interface Region {
   lon: number
   osm: OsmRef | null
   themes: Category[]
+  /** Nuits sur place pour les points forts (sans le trajet pour y aller). */
   nights: number
+  /** `boat_or_plane` : aucune route depuis les autres régions (île…). */
+  access: 'road' | 'boat_or_plane' | 'unknown'
   place_count: number
   highlights: Place[]
   /** Lieux du voyage déjà dans la région. */

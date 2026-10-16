@@ -79,6 +79,38 @@ pub fn best_base(spots: &[Spot], region: &Region, candidates: &[Settlement]) -> 
         .map(|(i, _)| i)
 }
 
+/// Groupes de bases reliées par la route (`links[i][j]`, dans un sens ou l'autre) : `true`
+/// pour les bases du plus grand groupe (à égalité, celui de la première base).
+pub fn road_groups(links: &[Vec<bool>]) -> Vec<bool> {
+    let n = links.len();
+    let linked = |i: usize, j: usize| {
+        links[i].get(j).copied().unwrap_or(false) || links[j].get(i).copied().unwrap_or(false)
+    };
+    let mut group = vec![usize::MAX; n];
+    let mut sizes = vec![];
+    for start in 0..n {
+        if group[start] != usize::MAX {
+            continue;
+        }
+        let id = sizes.len();
+        let (mut stack, mut size) = (vec![start], 0);
+        group[start] = id;
+        while let Some(i) = stack.pop() {
+            size += 1;
+            let next: Vec<usize> = (0..n)
+                .filter(|&j| group[j] == usize::MAX && linked(i, j))
+                .collect();
+            for j in next {
+                group[j] = id;
+                stack.push(j);
+            }
+        }
+        sizes.push(size);
+    }
+    let main = (0..sizes.len()).max_by(|&a, &b| sizes[a].cmp(&sizes[b]).then(b.cmp(&a)));
+    group.iter().map(|&g| Some(g) == main).collect()
+}
+
 /// Nuits pour visiter les points forts, `day_budget_s` par journée (au moins une).
 fn nights(spots: &[Spot], members: &[usize], day_budget_s: u32) -> u32 {
     let visits: u32 = members
@@ -267,6 +299,20 @@ mod tests {
             Some(1)
         );
         assert_eq!(best_base(&spots, region, &[]), None);
+    }
+
+    #[test]
+    fn the_largest_road_network_is_the_mainland() {
+        // 0, 1, 2 reliés (dans un sens suffit) ; 3 isolé (île) ; 4 et 5 reliés entre eux.
+        let mut links = vec![vec![false; 6]; 6];
+        for (i, j) in [(0, 1), (2, 1), (4, 5)] {
+            links[i][j] = true;
+        }
+        assert_eq!(
+            road_groups(&links),
+            vec![true, true, true, false, false, false]
+        );
+        assert!(road_groups(&[]).is_empty());
     }
 
     #[test]
