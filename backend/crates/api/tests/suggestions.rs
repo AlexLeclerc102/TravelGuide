@@ -287,6 +287,39 @@ async fn lodging_around_a_stay_and_free_time(db: PgPool) {
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
 
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn declared_interests_and_budget_are_reasons(db: PgPool) {
+    let app = TestApp::new(db);
+    let (orga, viewer, trip, area) = setup(&app).await;
+    seed(&app).await;
+    let res = app
+        .patch(
+            &format!("/api/v1/trips/{trip}"),
+            json!({ "version": 2, "interests": ["nature"], "budget": "comfort" }),
+            Some(&orga),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    let uri = format!("/api/v1/trips/{trip}/suggestions");
+    let res = app.get(&uri, Some(&viewer)).await;
+    for s in res.body["suggestions"].as_array().unwrap() {
+        assert!(
+            s["reasons"]
+                .as_array()
+                .unwrap()
+                .contains(&json!({ "kind": "interest", "interest": "nature" })),
+            "{s:?}"
+        );
+    }
+    let res = app
+        .get(&format!("{uri}?lodging_near={area}"), Some(&viewer))
+        .await;
+    assert!(res.body["suggestions"][0]["reasons"]
+        .as_array()
+        .unwrap()
+        .contains(&json!({ "kind": "budget", "budget": "comfort" })));
+}
+
 /// Notoriété stockée : Arenal (40 langues) et Corcovado (30 langues).
 async fn seed_notability(app: &TestApp) {
     sqlx::raw_sql(
@@ -377,15 +410,10 @@ async fn regions_group_notable_places_around_a_place_to_stay(db: PgPool) {
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
 
-#[sqlx::test(migrator = "api::MIGRATOR")]
-async fn regions_without_road_access_are_reached_by_boat_or_plane(db: PgPool) {
-    let app = TestApp::new(db);
-    let orga = app.register_organizer("orga@example.com", "Orga").await;
-    let trip = app.create_trip(&orga, "Vide").await;
-    seed(&app).await;
-    seed_notability(&app).await;
-    // Une localité près de Corcovado, et une île très connue (sans route : le faux moteur
-    // ne relie rien à l'hémisphère sud).
+/// Une localité près de Corcovado, une réserve et son village non loin de La Fortuna, une île
+/// très connue (sans route : le faux moteur ne relie rien à l'hémisphère sud) et l'aéroport
+/// de San José.
+async fn seed_more_regions(app: &TestApp) {
     sqlx::raw_sql(
         "INSERT INTO osm_places (osm_type, osm_id, name, category, osm_tag, location, wikidata)
          VALUES ('node', 20, 'Puerto Jiménez', 'other', 'place=town',
@@ -393,12 +421,100 @@ async fn regions_without_road_access_are_reached_by_boat_or_plane(db: PgPool) {
                 ('node', 21, 'Isla Lejana', 'nature', 'natural=beach',
                  ST_SetSRID(ST_MakePoint(-90.31, -0.75), 4326)::geography, 'Q999'),
                 ('node', 22, 'Puerto Isla', 'other', 'place=village',
-                 ST_SetSRID(ST_MakePoint(-90.30, -0.74), 4326)::geography, NULL);
-         INSERT INTO wikidata_notability (qid, languages) VALUES ('Q999', 59);",
+                 ST_SetSRID(ST_MakePoint(-90.30, -0.74), 4326)::geography, NULL),
+                ('way', 23, 'Juan Santamaría (SJO)', 'other', 'aeroway=aerodrome',
+                 ST_SetSRID(ST_MakePoint(-84.204, 9.998), 4326)::geography, NULL),
+                ('way', 24, 'Reserva Monteverde', 'nature', 'leisure=nature_reserve',
+                 ST_SetSRID(ST_MakePoint(-84.85, 10.25), 4326)::geography, 'Q777'),
+                ('node', 25, 'Santa Elena', 'other', 'place=village',
+                 ST_SetSRID(ST_MakePoint(-84.84, 10.26), 4326)::geography, NULL);
+         INSERT INTO wikidata_notability (qid, languages) VALUES ('Q999', 59), ('Q777', 25);",
     )
     .execute(&app.db)
     .await
     .unwrap();
+}
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn circuits_fit_the_trip_between_airports(db: PgPool) {
+    let app = TestApp::new(db);
+    let orga = app.register_organizer("orga@example.com", "Orga").await;
+    // Du 1er au 8 décembre : 8 nuits.
+    let trip = app.create_trip(&orga, "Vide").await;
+    seed(&app).await;
+    seed_notability(&app).await;
+    seed_more_regions(&app).await;
+
+    let airports = app
+        .get(&format!("/api/v1/trips/{trip}/airports"), Some(&orga))
+        .await;
+    assert_eq!(airports.body[0]["name"], "Juan Santamaría (SJO)");
+    let sjo = airports.body[0]["osm"].clone();
+    // L'aéroport n'est jamais suggéré comme lieu.
+    let res = app
+        .get(&format!("/api/v1/trips/{trip}/suggestions"), Some(&orga))
+        .await;
+    assert!(!res.body.to_string().contains("SJO"));
+
+    let uri = format!("/api/v1/trips/{trip}/circuits");
+    let res = app
+        .post(&uri, json!({ "start": sjo, "end": sjo }), Some(&orga))
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    assert_eq!(res.body["nights"], 8);
+    assert_eq!(res.body["boat_or_plane"], json!(["Puerto Isla"]));
+    let first = &res.body["circuits"][0];
+    let stops = first["stops"].as_array().unwrap();
+    let names: Vec<&str> = stops.iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert!(
+        names.contains(&"La Fortuna") && names.contains(&"Santa Elena"),
+        "{first:?}"
+    );
+    assert_eq!(
+        stops
+            .iter()
+            .map(|s| s["nights"].as_u64().unwrap())
+            .sum::<u64>(),
+        8
+    );
+    // Les nuits s'enchaînent du premier au dernier soir du voyage.
+    assert_eq!(stops[0]["first_night"], "2026-12-01");
+    assert_eq!(stops[stops.len() - 1]["last_night"], "2026-12-08");
+    // Une variante différente.
+    assert_ne!(res.body["circuits"][1]["stops"], first["stops"]);
+    assert!(stops[0]["transfer_min"].as_u64().unwrap() > 0);
+    assert!(first["return_min"].as_u64().unwrap() > 0);
+    assert!(!stops[0]["highlights"].as_array().unwrap().is_empty());
+
+    // Un circuit s'applique comme une proposition de séjours.
+    let res = app
+        .post(
+            &format!("/api/v1/trips/{trip}/stays/proposal/apply"),
+            json!({ "stays": stops }),
+            Some(&orga),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+
+    // Aéroport inconnu : refus.
+    let res = app
+        .post(
+            &uri,
+            json!({ "start": { "type": "node", "id": 1 } }),
+            Some(&orga),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn regions_without_road_access_are_reached_by_boat_or_plane(db: PgPool) {
+    let app = TestApp::new(db);
+    let orga = app.register_organizer("orga@example.com", "Orga").await;
+    let trip = app.create_trip(&orga, "Vide").await;
+    seed(&app).await;
+    seed_notability(&app).await;
+    seed_more_regions(&app).await;
     let uri = format!("/api/v1/trips/{trip}/regions");
     let res = app.get(&uri, Some(&orga)).await;
     let access: Vec<(&str, &str)> = res.body["regions"]
@@ -413,6 +529,7 @@ async fn regions_without_road_access_are_reached_by_boat_or_plane(db: PgPool) {
             ("Puerto Isla", "boat_or_plane"),
             ("La Fortuna", "road"),
             ("Puerto Jiménez", "road"),
+            ("Santa Elena", "road"),
         ]
     );
 

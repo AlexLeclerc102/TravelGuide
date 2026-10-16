@@ -31,5 +31,9 @@ export function reasonText(r: SuggestionReason, days: TripDay[], pois: Poi[]) {
       return t.suggestions.taste(t.categories[r.category].toLowerCase(), formatRating(r.average))
     case 'free_time':
       return t.suggestions.freeTime(duration(r.minutes), short(r.date))
+    case 'interest':
+      return t.suggestions.interest(t.interests[r.interest].toLowerCase())
+    case 'budget':
+      return t.suggestions.budget(t.budgets[r.budget].replace(/ \(.*\)$/, '').toLowerCase())
   }
 }

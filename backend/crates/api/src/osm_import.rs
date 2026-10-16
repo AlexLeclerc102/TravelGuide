@@ -55,10 +55,12 @@ const KINDS: &[(&str, &[&str])] = &[
     ("amenity", &["restaurant", "cafe"]),
     // Localités : noms des étapes de séjour proposées (jamais suggérées comme lieux).
     ("place", &["city", "town", "village"]),
+    // Aéroports à code IATA : arrivée et départ des circuits types (jamais suggérés).
+    ("aeroway", &["aerodrome"]),
 ];
 
 /// À incrémenter quand les lieux retenus changent : force un réimport du même fichier.
-const IMPORT_VERSION: u32 = 2;
+const IMPORT_VERSION: u32 = 3;
 
 /// Lieu importé.
 #[derive(Debug, Clone, PartialEq)]
@@ -88,7 +90,8 @@ fn classify<'a>(tags: impl Iterator<Item = (&'a str, &'a str)>) -> Option<Tagged
     let mut map: Option<HashMap<&str, &str>> = None;
     for (k, v) in tags {
         // La plupart des objets n'ont aucun tag utile : on ne construit la table qu'au besoin.
-        if map.is_none() && !(k == "name" || KINDS.iter().any(|(key, _)| *key == k)) {
+        if map.is_none() && !(k == "name" || k == "iata" || KINDS.iter().any(|(key, _)| *key == k))
+        {
             continue;
         }
         map.get_or_insert_with(HashMap::new).insert(k, v);
@@ -102,6 +105,15 @@ fn classify<'a>(tags: impl Iterator<Item = (&'a str, &'a str)>) -> Option<Tagged
         let v = *map.get(key)?;
         values.contains(&v).then_some((*key, v))
     })?;
+    // Aérodromes : seulement les aéroports de ligne (code IATA), nommés avec leur code.
+    let name = if key == "aeroway" {
+        let iata = map
+            .get("iata")
+            .filter(|c| c.len() == 3 && c.bytes().all(|b| b.is_ascii_uppercase()))?;
+        format!("{name} ({iata})")
+    } else {
+        name.to_owned()
+    };
     Some(Tagged {
         name: name.chars().take(200).collect(),
         category: Category::from_osm(key, value),
@@ -329,6 +341,23 @@ pub async fn import_if_changed(db: &PgPool, path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_airline_airports_only() {
+        let t = classify(
+            [
+                ("iata", "SJO"),
+                ("aeroway", "aerodrome"),
+                ("name", "Aeropuerto Internacional Juan Santamaría"),
+            ]
+            .into_iter(),
+        )
+        .unwrap();
+        assert_eq!(t.name, "Aeropuerto Internacional Juan Santamaría (SJO)");
+        assert_eq!(t.osm_tag, "aeroway=aerodrome");
+        // Piste privée sans code IATA : ignorée.
+        assert!(classify([("aeroway", "aerodrome"), ("name", "Finca")].into_iter()).is_none());
+    }
 
     #[test]
     fn keeps_named_places_of_interest() {

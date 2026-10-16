@@ -16,6 +16,7 @@ import { t } from '../../i18n/fr'
 import { poiLinks } from '../../lib/links'
 import { reasonText } from '../../lib/suggestions'
 import type { MapMarker } from '../MapView'
+import { CircuitsSection } from './CircuitsSection'
 import { RegionsSection } from './RegionsSection'
 
 const FILTERS: (Category | null)[] = [null, 'nature', 'sight', 'museum', 'activity', 'food']
@@ -88,6 +89,7 @@ export function SuggestionsPanel({ trip, pois, focusedId, onFocus, onMarkersChan
       )}
       {data?.status === 'not_imported' && <p className="notice small">{t.suggestions.notImported}</p>}
       {data && <RegionsSection key={String(discovery)} trip={trip} pois={pois} canEdit={canEdit} defaultOpen={discovery} />}
+      {data && <CircuitsSection trip={trip} pois={pois} canEdit={canEdit} />}
       {discovery && <p className="notice small">{t.suggestions.discovery}</p>}
       {data?.status === 'ready' && list.length === 0 && <p className="muted small">{t.suggestions.none}</p>}
 

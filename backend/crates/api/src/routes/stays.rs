@@ -176,7 +176,7 @@ async fn replace_stay(
 
 #[derive(Deserialize, ToSchema)]
 pub struct ProposalRequest {
-    /// Nuits minimum par étape (défaut 2).
+    /// Nuits minimum par étape (défaut selon le rythme du voyage : 3, 2 ou 1).
     pub min_nights: Option<u8>,
     /// Lieux du voyage servant d'arrivée et de départ (ex. aéroport), s'ils sont connus.
     pub start_poi_id: Option<Uuid>,
@@ -335,7 +335,7 @@ async fn propose_stays(
     let problem = StayProblem {
         visits: &visits,
         nights,
-        min_nights: usize::from(req.min_nights.unwrap_or(2).max(1)),
+        min_nights: usize::from(req.min_nights.unwrap_or(trip.pace.min_nights()).max(1)),
         day_budget_s: seconds(trip.day_end).saturating_sub(seconds(trip.day_start)),
         start,
         end,

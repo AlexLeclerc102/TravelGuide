@@ -5,6 +5,11 @@ import type { User } from './auth'
 export type Role = 'organizer' | 'editor' | 'viewer'
 export type TransportMode = 'walk' | 'bike' | 'car' | 'transit'
 export const ALL_MODES: TransportMode[] = ['walk', 'bike', 'car', 'transit']
+/** Envies du groupe (questionnaire de création du voyage). */
+export type Interest = 'nature' | 'beach' | 'sight' | 'museum' | 'activity' | 'food' | 'shopping'
+export const ALL_INTERESTS: Interest[] = ['nature', 'beach', 'sight', 'museum', 'activity', 'food', 'shopping']
+export type Pace = 'relaxed' | 'balanced' | 'packed'
+export type Budget = 'budget' | 'comfort'
 
 export interface Trip {
   id: string
@@ -16,6 +21,9 @@ export interface Trip {
   day_start: string
   day_end: string
   default_modes: TransportMode[]
+  interests: Interest[]
+  pace: Pace
+  budget: Budget | null
   version: number
   my_role: Role
   member_count: number
@@ -31,6 +39,10 @@ export interface TripInput {
   day_start?: string
   day_end?: string
   default_modes?: TransportMode[]
+  interests?: Interest[]
+  pace?: Pace
+  /** `null` : pas de préférence. */
+  budget?: Budget | null
 }
 
 export interface Member {
@@ -100,6 +112,8 @@ export function useUpdateTrip(id: string) {
       qc.invalidateQueries({ queryKey: tripKeys.days(id) })
       qc.invalidateQueries({ queryKey: tripKeys.routes(id) })
       qc.invalidateQueries({ queryKey: tripKeys.itinerary(id) })
+      // Envies et rythme modifiés : suggestions, régions et circuits changent.
+      qc.invalidateQueries({ queryKey: [...tripKeys.one(id), 'suggestions'] })
     },
     // Conflit de version : on recharge la version à jour.
     onError: () => qc.invalidateQueries({ queryKey: tripKeys.one(id) }),

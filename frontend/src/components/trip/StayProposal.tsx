@@ -10,7 +10,8 @@ const short = (date: string) => formatDate(date, { weekday: 'short', day: 'numer
 
 /** « Où dormir ? » : étapes proposées d'après les lieux du voyage, appliquées en un clic. */
 export function StayProposal({ trip, pois, canEdit }: { trip: Trip; pois: Poi[]; canEdit: boolean }) {
-  const [minNights, setMinNights] = useState(2)
+  // Défaut selon le rythme du voyage (comme le serveur).
+  const [minNights, setMinNights] = useState<number>(({ relaxed: 3, balanced: 2, packed: 1 } as const)[trip.pace] ?? 2)
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
   const propose = useProposeStays(trip.id)

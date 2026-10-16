@@ -86,6 +86,7 @@ const arenal: Suggestion = {
     { kind: 'near', date: '2026-12-02', minutes: 15 },
     { kind: 'taste', category: 'nature', average: 4.5 },
     { kind: 'free_time', date: '2026-12-02', minutes: 150 },
+    { kind: 'interest', interest: 'beach' },
   ],
 }
 const soda: Suggestion = {
@@ -131,6 +132,7 @@ describe('suggestions', () => {
     expect(within(card).getByText('≈ 15 min de La Fortuna (mer. 2 déc.)')).toBeInTheDocument()
     expect(within(card).getByText('Le groupe aime : nature (4,5 ★)')).toBeInTheDocument()
     expect(within(card).getByText('2 h 30 libres le mer. 2 déc.')).toBeInTheDocument()
+    expect(within(card).getByText('Correspond à vos envies : plages')).toBeInTheDocument()
     expect(within(card).getByRole('link', { name: 'Wikipédia' })).toHaveAttribute('href', 'https://en.wikipedia.org/wiki/Arenal_Volcano')
     expect(screen.getByTestId('map')).toHaveTextContent('2 suggestions sur la carte')
     // Lecteur : pas d'ajout ni de refus.
@@ -246,6 +248,85 @@ describe('suggestions', () => {
     fireEvent.click(within(card).getByRole('button', { name: 'Ajouter les points forts de La Fortuna' }))
     await waitFor(() => expect(within(card).getByRole('button', { name: /La Fortuna/ })).toHaveTextContent('Points forts ajoutés'))
     expect(added).toEqual(['Volcán Arenal', 'Catarata Río Fortuna'])
+  })
+
+  it('propose des circuits types entre deux aéroports et en applique un', async () => {
+    const calls: { url: string; body: unknown }[] = []
+    const sjo = { type: 'way' as const, id: 23 }
+    const stop = (name: string, first: string, last: string, nights: number, highlight: Place) => ({
+      name,
+      lat: 10.47,
+      lon: -84.64,
+      osm: { type: 'node' as const, id: nights },
+      first_night: first,
+      last_night: last,
+      nights,
+      transfer_min: 150,
+      themes: ['nature' as const],
+      highlights: [highlight],
+    })
+    mockApi(
+      routes('editor', () => ({ status: 'discovery', suggestions: [] }), {
+        'GET /trips/trip-1/airports': () => ({
+          status: 200,
+          body: [{ name: 'Juan Santamaría (SJO)', lat: 10, lon: -84.2, osm: sjo }],
+        }),
+        'POST /trips/trip-1/circuits': (init) => {
+          calls.push({ url: 'circuits', body: JSON.parse(String(init?.body)) })
+          return {
+            status: 200,
+            body: {
+              status: 'ready',
+              nights: 2,
+              circuits: [
+                {
+                  themes: ['nature'],
+                  stops: [
+                    stop('La Fortuna', '2026-12-01', '2026-12-01', 1, place(1, 'Volcán Arenal')),
+                    stop('Santa Elena', '2026-12-02', '2026-12-02', 1, place(2, 'Reserva Monteverde')),
+                  ],
+                  drive_min: 400,
+                  return_min: 150,
+                },
+                { themes: ['nature'], stops: [stop('Quepos', '2026-12-01', '2026-12-02', 2, place(3, 'Manuel Antonio'))], drive_min: 300, return_min: 150 },
+              ],
+              boat_or_plane: ['Base Wafer'],
+            },
+          }
+        },
+        'POST /trips/trip-1/stays/proposal/apply': (init) => {
+          calls.push({ url: 'apply', body: JSON.parse(String(init?.body)) })
+          return { status: 200, body: [] }
+        },
+        'POST /trips/trip-1/pois': (init) => {
+          const body = JSON.parse(String(init?.body))
+          calls.push({ url: 'poi', body: body.name })
+          return { status: 201, body: { ...fortuna, id: `p${calls.length}`, name: body.name, osm: body.osm } }
+        },
+      }),
+    )
+    await openSuggestions()
+    const summary = await screen.findByText('Circuits types pour vos 2 nuits')
+    const details = summary.closest('details')!
+    details.open = true
+    fireEvent(details, new Event('toggle'))
+    const arrival = await screen.findByLabelText('Aéroport d’arrivée')
+    await within(arrival).findByRole('option', { name: 'Juan Santamaría (SJO)' })
+    fireEvent.change(arrival, { target: { value: 'way/23' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Proposer des circuits' }))
+
+    const card = (await screen.findByText('Les incontournables')).closest('li')!
+    expect(calls[0].body).toEqual({ start: sjo, end: null })
+    expect(within(card).getByText('La Fortuna')).toBeInTheDocument()
+    expect(within(card).getByText('≈ 6 h 40 de route entre les étapes · ≈ 2 h 30 pour rejoindre l’aéroport de départ')).toBeInTheDocument()
+    expect(screen.getByText('Variante 1')).toBeInTheDocument()
+    expect(screen.getByText(/en expédition\) : Base Wafer/)).toBeInTheDocument()
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Appliquer le circuit « Les incontournables »' }))
+    expect(await within(card).findByRole('status')).toHaveTextContent('Circuit appliqué')
+    expect(calls.map((c) => c.url)).toEqual(['circuits', 'apply', 'poi', 'poi'])
+    expect(calls[1].body).toMatchObject({ stays: [{ name: 'La Fortuna', first_night: '2026-12-01', nights: 1, poi_ids: [] }, { name: 'Santa Elena' }] })
+    expect(calls.slice(2).map((c) => c.body)).toEqual(['Volcán Arenal', 'Reserva Monteverde'])
   })
 
   it('choisit un hôtel de la zone : ajouté puis à la place de la zone', async () => {

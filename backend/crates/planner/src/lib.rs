@@ -4,6 +4,7 @@
 //! une matrice de temps de trajet et des contraintes, et produit un
 //! itinéraire de façon déterministe. Elle est testée unitairement.
 
+pub mod circuits;
 pub mod geo;
 pub mod itinerary;
 pub mod ratings;

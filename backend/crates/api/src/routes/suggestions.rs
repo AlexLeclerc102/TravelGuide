@@ -12,6 +12,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::auth::CurrentUser;
+use crate::circuits::{self, Airport, CircuitRequest, Circuits};
 use crate::error::{AppResult, ErrorBody};
 use crate::places::{Category, OsmRef};
 use crate::realtime::{ClientId, Topic};
@@ -24,6 +25,8 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_suggestions))
         .routes(routes!(list_regions))
+        .routes(routes!(list_airports))
+        .routes(routes!(propose_circuits))
         .routes(routes!(dismiss_suggestion, reset_dismissals))
 }
 
@@ -91,6 +94,42 @@ async fn list_regions(
     )?;
     Ok(Json(
         regions::regions(&state.db, &state.routing, trip_id, current.user.id).await?,
+    ))
+}
+
+/// Aéroports de ligne du pays (arrivée et départ des circuits types).
+#[utoipa::path(get, path = "/trips/{trip_id}/airports", tag = "suggestions",
+    params(("trip_id" = Uuid, Path)),
+    responses((status = 200, body = Vec<Airport>), (status = 404, body = ErrorBody)))]
+async fn list_airports(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(trip_id): Path<Uuid>,
+) -> AppResult<Json<Vec<Airport>>> {
+    trips::require_role(&state.db, trip_id, current.user.id, Role::Viewer).await?;
+    Ok(Json(circuits::airports(&state.db).await?))
+}
+
+/// Circuits types pour la durée du voyage : régions à enchaîner, nuits et route, depuis
+/// l'aéroport d'arrivée jusqu'à celui de départ (calcul seul : rien n'est enregistré).
+#[utoipa::path(post, path = "/trips/{trip_id}/circuits", tag = "suggestions",
+    params(("trip_id" = Uuid, Path)), request_body = CircuitRequest,
+    responses((status = 200, body = Circuits), (status = 400, body = ErrorBody),
+        (status = 404, body = ErrorBody), (status = 429, body = ErrorBody)))]
+async fn propose_circuits(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(trip_id): Path<Uuid>,
+    Json(req): Json<CircuitRequest>,
+) -> AppResult<Json<Circuits>> {
+    trips::require_role(&state.db, trip_id, current.user.id, Role::Viewer).await?;
+    state.rate_limiter.check(
+        &format!("regions:{}", current.user.id),
+        PER_USER_PER_MINUTE,
+        Duration::from_secs(60),
+    )?;
+    Ok(Json(
+        circuits::circuits(&state.db, &state.routing, trip_id, current.user.id, req).await?,
     ))
 }
 

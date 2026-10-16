@@ -35,12 +35,31 @@ compléter un voyage déjà ébauché.
      `wikidata` dans OSM). Pistes : point représentatif des relations, accessibilité, lier les
      lieux sans tag à Wikidata par nom et position, signaux de l'étape 5.
 
-3. **Questionnaire d'envies** à la création du voyage (thèmes, rythme, budget) : goûts
-   initiaux par catégorie, remplacés peu à peu par les avis réels.
+3. **Questionnaire d'envies** — *fait*
+   - À la création du voyage (et dans ses paramètres) : centres d'intérêt (nature, plages,
+     sites, musées, activités, gastronomie, shopping), rythme (tranquille, équilibré, intense)
+     et hébergement (petit budget, confort, sans préférence).
+   - Envies : bonus et raison « Correspond à vos envies » dans les suggestions (plus fort pour
+     les lieux notables), qui s'efface à mesure que le groupe note ce genre de lieux ; poids
+     doublé dans les régions ; pour « plages », toutes les plages nommées comptent (rarement
+     dans Wikipédia), et les côtes qui en sont pleines deviennent des régions.
+   - Rythme : nuits conseillées par région, nuits minimum par étape (« Où dormir ? », circuits).
+   - Budget : type d'hébergement suggéré autour d'une zone (auberges, maisons d'hôtes,
+     campings ou hôtels) — aucune donnée de prix dans OSM.
 
-4. **Circuits types** selon la durée du voyage et les points d'arrivée/départ : 2 ou 3
-   enchaînements de régions avec thème et temps de route (réutilise `planner::stays` avec des
-   régions en entrée).
+4. **Circuits types** — *fait*
+   - Aéroports à code IATA importés de l'OSM (internationaux d'abord) pour l'arrivée et le
+     départ.
+   - `planner::circuits` (et non `planner::stays`, qui ne choisit pas *quelles* régions
+     garder) : insertion gloutonne des régions selon leur intérêt (3 meilleurs points forts,
+     plus la moitié de ce qui répond aux envies) moins le détour de route, sans étapes à moins
+     de 45 min l'une de l'autre ni trajet de plus de 7 h ; 2-opt ; nuits restantes réparties ;
+     variantes en dévaluant les régions déjà proposées.
+   - « Appliquer ce circuit » : une zone d'hébergement par étape (comme « Où dormir ? ») et les
+     points forts ajoutés au voyage. Les régions en bateau ou avion sont signalées à part.
+   - Limites : thèmes limités aux catégories (les plages restent « nature ») ; les variantes
+     sont parfois maigres (deux étapes voisines) ; la journée de route n'est pas déduite des
+     nuits d'une étape.
 
 5. **Meilleurs signaux d'intérêt** : guide Wikivoyage, patrimoine (UNESCO, Wikidata P1435),
    superficie des parcs nationaux, consultations Wikipédia ; affichés comme raisons.

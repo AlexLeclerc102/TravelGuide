@@ -18,11 +18,18 @@ use uuid::Uuid;
 use crate::error::AppResult;
 use crate::places::{Category, OsmRef, OsmType, Place};
 use crate::pois;
+use crate::preferences::{self, Interest};
 use crate::routing::RoutingService;
 use crate::trips;
 
 /// Langues Wikipédia minimales pour compter comme lieu notable.
 const MIN_LANGUAGES: i32 = 2;
+/// Poids d'un lieu qui répond aux envies du groupe.
+const INTEREST_BOOST: f64 = 2.0;
+/// Notoriété prêtée à une plage sans article Wikipédia (envie « plages » seulement).
+const UNKNOWN_BEACH_LANGUAGES: i32 = 3;
+/// Points forts qui font l'intérêt d'une région dans un circuit.
+const CIRCUIT_HIGHLIGHTS: usize = 3;
 /// Points forts présentés par région.
 const HIGHLIGHTS: usize = 5;
 /// Rayon de recherche de la localité où loger : plus large que la région, car le centre d'un
@@ -67,6 +74,10 @@ pub struct Region {
     pub highlights: Vec<Place>,
     /// Lieux du voyage (hors hébergements) déjà dans la région.
     pub in_trip: usize,
+    /// Intérêt de la région pour un circuit : ses meilleurs points forts seulement (on ne voit
+    /// pas tout d'une capitale en une étape), notoriété pondérée par les envies.
+    #[serde(skip)]
+    pub weight: f64,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -182,24 +193,31 @@ pub async fn regions(
     // Un même élément Wikidata peut être porté par plusieurs objets OSM (parc national en
     // `boundary` et en `leisure`…) : un seul compte.
     let rows: Vec<SpotRow> = sqlx::query_as(
-        "SELECT DISTINCT ON (o.wikidata)
+        "SELECT DISTINCT ON (coalesce(o.wikidata, o.osm_type || o.osm_id))
                 o.osm_type, o.osm_id, o.name, o.category, o.osm_tag,
                 ST_Y(o.location::geometry) AS lat, ST_X(o.location::geometry) AS lon,
                 o.opening_hours, o.website, o.phone, o.email, o.wikidata, o.wikipedia,
-                n.languages
-         FROM osm_places o JOIN wikidata_notability n ON n.qid = o.wikidata
-         WHERE n.languages >= $1
+                coalesce(n.languages, $4) AS languages
+         FROM osm_places o LEFT JOIN wikidata_notability n ON n.qid = o.wikidata
+         WHERE (n.languages >= $1 OR ($3 AND o.osm_tag = 'natural=beach'))
            AND o.category NOT IN ('lodging', 'food')
-           AND o.osm_tag NOT LIKE 'place=%'
+           AND o.osm_tag NOT LIKE 'place=%' AND o.osm_tag <> 'aeroway=aerodrome'
            AND NOT EXISTS (SELECT 1 FROM trip_dismissed_suggestions d WHERE d.trip_id = $2
                            AND d.osm_type = o.osm_type AND d.osm_id = o.osm_id)
-         ORDER BY o.wikidata, o.osm_type, o.osm_id",
+         ORDER BY coalesce(o.wikidata, o.osm_type || o.osm_id), o.osm_type, o.osm_id",
     )
     .bind(MIN_LANGUAGES)
     .bind(trip_id)
+    // Les plages ont rarement un article Wikipédia : pour qui les aime, toutes comptent (un
+    // peu), et les côtes qui en sont pleines deviennent des régions.
+    .bind(trip.interests.contains(&Interest::Beach))
+    .bind(UNKNOWN_BEACH_LANGUAGES)
     .fetch_all(db)
     .await?;
-    if rows.is_empty() {
+    let ready: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM wikidata_notability)")
+        .fetch_one(db)
+        .await?;
+    if rows.is_empty() || !ready {
         return Ok(Regions {
             status: RegionStatus::NotImported,
             regions: vec![],
@@ -213,6 +231,11 @@ pub async fn regions(
         spots.push(Spot {
             location: LatLon::new(r.lat, r.lon),
             languages: r.languages.max(0) as u32,
+            boost: if preferences::matching(&trip.interests, category, &r.osm_tag).is_some() {
+                INTEREST_BOOST
+            } else {
+                1.0
+            },
             category: category_index(category),
             duration_s: category.default_duration_min().max(0) as u32 * 60,
         });
@@ -243,7 +266,9 @@ pub async fn regions(
         .filter(|p| p.category != Category::Lodging)
         .map(|p| LatLon::new(p.lat, p.lon))
         .collect();
-    let day_budget_s = seconds(trip.day_end).saturating_sub(seconds(trip.day_start));
+    // Le rythme du groupe : moins (ou plus) de visites par journée.
+    let day_budget_s = (f64::from(seconds(trip.day_end).saturating_sub(seconds(trip.day_start)))
+        * trip.pace.day_factor()) as u32;
     let mut out = vec![];
     let mut used = vec![];
     for region in regions::regions(&spots, day_budget_s) {
@@ -299,6 +324,21 @@ pub async fn regions(
                 .iter()
                 .filter(|&&v| haversine_m(v, region.center) <= RADIUS_M)
                 .count(),
+            // Ses meilleurs points forts, plus la moitié de tout ce qui répond aux envies du groupe
+            // (une côte pleine de plages vaut le détour pour qui les aime).
+            weight: region
+                .members
+                .iter()
+                .enumerate()
+                .map(|(rank, &i)| {
+                    let s = &spots[i];
+                    match (rank < CIRCUIT_HIGHLIGHTS, s.boost > 1.0) {
+                        (true, _) => s.weight(),
+                        (false, true) => s.weight() * 0.5,
+                        (false, false) => 0.0,
+                    }
+                })
+                .sum(),
         });
     }
     // Accès : les bases reliées entre elles par la route forment des groupes ; le plus grand

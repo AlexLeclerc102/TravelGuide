@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from './client'
 import type { Category, OsmRef, Place } from './pois'
-import { tripKeys } from './trips'
+import { tripKeys, type Budget, type Interest } from './trips'
 
 /** Pourquoi un lieu est proposé (voir `planner::recommend`). */
 export type SuggestionReason =
@@ -9,6 +9,8 @@ export type SuggestionReason =
   | { kind: 'notable'; languages: number }
   | { kind: 'taste'; category: Category; average: number }
   | { kind: 'free_time'; date: string; minutes: number }
+  | { kind: 'interest'; interest: Interest }
+  | { kind: 'budget'; budget: Budget }
 
 export interface Suggestion {
   place: Place
@@ -54,11 +56,68 @@ export interface Regions {
   regions: Region[]
 }
 
+/** Aéroport de ligne (arrivée et départ des circuits). */
+export interface Airport {
+  name: string
+  lat: number
+  lon: number
+  osm: OsmRef
+}
+
+export interface CircuitStop {
+  name: string
+  lat: number
+  lon: number
+  osm: OsmRef | null
+  first_night: string
+  last_night: string
+  nights: number
+  transfer_min: number
+  themes: Category[]
+  highlights: Place[]
+}
+
+export interface Circuit {
+  themes: Category[]
+  stops: CircuitStop[]
+  drive_min: number
+  return_min: number
+}
+
+export interface Circuits {
+  status: 'ready' | 'not_imported'
+  nights: number
+  /** Le premier : les incontournables ; puis des variantes. */
+  circuits: Circuit[]
+  /** Régions sans route (île…) à ajouter en expédition. */
+  boat_or_plane: string[]
+}
+
+export interface CircuitRequest {
+  start: OsmRef | null
+  end: OsmRef | null
+}
+
 export const suggestionKeys = {
   all: (tripId: string) => [...tripKeys.one(tripId), 'suggestions'] as const,
   list: (tripId: string, filter: SuggestionFilter) => [...suggestionKeys.all(tripId), filter] as const,
   regions: (tripId: string) => [...suggestionKeys.all(tripId), 'regions'] as const,
+  airports: (tripId: string) => [...suggestionKeys.all(tripId), 'airports'] as const,
 }
+
+export const useAirports = (tripId: string, enabled = true) =>
+  useQuery({
+    queryKey: suggestionKeys.airports(tripId),
+    queryFn: () => apiFetch<Airport[]>(`/trips/${tripId}/airports`),
+    enabled,
+    staleTime: Infinity,
+  })
+
+export const useProposeCircuits = (tripId: string) =>
+  useMutation({
+    mutationFn: (req: CircuitRequest) =>
+      apiFetch<Circuits>(`/trips/${tripId}/circuits`, { method: 'POST', body: JSON.stringify(req) }),
+  })
 
 export const useRegions = (tripId: string, enabled = true) =>
   useQuery({

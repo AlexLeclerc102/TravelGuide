@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { ALL_MODES, type TransportMode, type TripInput } from '../../api/trips'
+import { ALL_INTERESTS, ALL_MODES, type Budget, type Interest, type Pace, type TransportMode, type TripInput } from '../../api/trips'
 import { t } from '../../i18n/fr'
 
 interface Props {
@@ -19,7 +19,13 @@ const DEFAULTS: TripInput = {
   day_start: '09:00',
   day_end: '19:00',
   default_modes: ['car'],
+  interests: [],
+  pace: 'balanced',
+  budget: null,
 }
+
+const PACES: Pace[] = ['relaxed', 'balanced', 'packed']
+const BUDGETS: (Budget | null)[] = [null, 'budget', 'comfort']
 
 /** Formulaire partagé entre la création et les paramètres d'un voyage. */
 export function TripForm({ initial, submitLabel, pending, error, onSubmit }: Props) {
@@ -32,6 +38,14 @@ export function TripForm({ initial, submitLabel, pending, error, onSubmit }: Pro
     setForm({
       ...form,
       default_modes: modes.includes(mode) ? modes.filter((m) => m !== mode) : [...modes, mode],
+    })
+  }
+
+  function toggleInterest(interest: Interest) {
+    const interests = form.interests ?? []
+    setForm({
+      ...form,
+      interests: interests.includes(interest) ? interests.filter((i) => i !== interest) : [...interests, interest],
     })
   }
 
@@ -91,6 +105,41 @@ export function TripForm({ initial, submitLabel, pending, error, onSubmit }: Pro
         ))}
       </fieldset>
       {form.default_modes?.includes('transit') && <p className="hint">ⓘ {t.transitEstimate}</p>}
+      <fieldset className="preferences">
+        <legend>{t.trips.preferences}</legend>
+        <p className="hint">{t.trips.preferencesHint}</p>
+        <div className="chips" role="group" aria-label={t.trips.interests}>
+          <span className="small">{t.trips.interests}</span>
+          {ALL_INTERESTS.map((interest) => (
+            <label key={interest} className="chip">
+              <input
+                type="checkbox"
+                checked={form.interests?.includes(interest) ?? false}
+                onChange={() => toggleInterest(interest)}
+              />
+              {t.interests[interest]}
+            </label>
+          ))}
+        </div>
+        <div className="chips" role="radiogroup" aria-label={t.trips.pace}>
+          <span className="small">{t.trips.pace}</span>
+          {PACES.map((pace) => (
+            <label key={pace} className="chip" title={t.paces[pace].hint}>
+              <input type="radio" name="pace" checked={form.pace === pace} onChange={() => setForm({ ...form, pace })} />
+              {t.paces[pace].label}
+            </label>
+          ))}
+        </div>
+        <div className="chips" role="radiogroup" aria-label={t.trips.budget}>
+          <span className="small">{t.trips.budget}</span>
+          {BUDGETS.map((budget) => (
+            <label key={budget ?? 'none'} className="chip">
+              <input type="radio" name="budget" checked={(form.budget ?? null) === budget} onChange={() => setForm({ ...form, budget })} />
+              {t.budgets[budget ?? 'none']}
+            </label>
+          ))}
+        </div>
+      </fieldset>
       <label>
         {t.trips.timezone}
         <input required value={form.timezone} onChange={set('timezone')} />

@@ -235,6 +235,19 @@
   grand est le réseau du pays, les autres sont `boat_or_plane` (île Cocos : « Expédition de
   plusieurs jours », sans nuits conseillées). Sans moteur ou en panne : `unknown`. ~0,7 s pour
   12 régions.
+- **Envies** (`preferences`, migration 0013 : `trips.interests`, `pace`, `budget`) : un lieu
+  qui répond à une envie reçoit un bonus (12 points × force × (0,4 + 0,6 × notoriété)), force
+  = 2 / (2 + avis du groupe sur sa catégorie) ; un hébergement du bon type (budget) le reçoit
+  en entier. Rythme : budget de visite par jour × 0,7 / 1 / 1,25 pour les nuits des régions,
+  nuits minimum par étape 3 / 2 / 1.
+- **Circuits types** (`POST /trips/{id}/circuits`, `GET /trips/{id}/airports`,
+  `planner::circuits`) : aéroports `aeroway=aerodrome` avec code IATA (import version 3,
+  jamais suggérés). Régions accessibles par la route, temps Valhalla entre bases et aéroports.
+  Insertion gloutonne (intérêt normalisé à 100 − 10 points par heure de détour, étapes à
+  45 min au moins l'une de l'autre, trajets de 7 h au plus ; on continue à perte tant que les
+  étapes ne peuvent pas occuper les nuits, nuits conseillées + 3 au plus par étape), 2-opt, 3
+  variantes (régions déjà proposées × 0,35). Une étape a le format d'une étape de « Où
+  dormir ? » : l'interface l'applique avec `stays/proposal/apply` puis ajoute les points forts.
 - **Refus** : `trip_dismissed_suggestions`, partagé par le groupe (éditeurs), réinitialisable ;
   sujet temps réel `suggestions`. Les suggestions sont rechargées à tout changement du voyage.
 - **Interface** : onglet « Suggestions » (régions à découvrir, ouvertes d'emblée sur un voyage

@@ -2,6 +2,7 @@
 
 pub mod account;
 pub mod auth;
+pub mod circuits;
 pub mod client_ip;
 pub mod config;
 pub mod csrf;
@@ -14,6 +15,7 @@ pub mod opening;
 pub mod osm_import;
 pub mod places;
 pub mod pois;
+pub mod preferences;
 pub mod rate_limit;
 pub mod realtime;
 pub mod regions;

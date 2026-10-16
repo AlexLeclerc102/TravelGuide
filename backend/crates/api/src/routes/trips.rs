@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::auth::CurrentUser;
 use crate::error::{AppError, AppResult, ErrorBody};
+use crate::preferences::{normalize_interests, Budget, Interest, Pace};
 use crate::realtime::{ClientId, Topic};
 use crate::state::AppState;
 use crate::trips::{self, hhmm, normalize_modes, Role, TransportMode, Trip};
@@ -42,6 +43,11 @@ pub struct CreateTrip {
     pub day_end: Option<Time>,
     /// Défaut : `["car"]`.
     pub default_modes: Option<Vec<TransportMode>>,
+    #[serde(default)]
+    pub interests: Vec<Interest>,
+    /// Défaut : `balanced`.
+    pub pace: Option<Pace>,
+    pub budget: Option<Budget>,
 }
 
 /// Modification partielle ; `version` doit correspondre à la version actuelle.
@@ -62,6 +68,19 @@ pub struct UpdateTrip {
     #[schema(value_type = Option<String>)]
     pub day_end: Option<Time>,
     pub default_modes: Option<Vec<TransportMode>>,
+    pub interests: Option<Vec<Interest>>,
+    pub pace: Option<Pace>,
+    /// Absent : inchangé ; `null` : plus de préférence.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<Budget>)]
+    pub budget: Option<Option<Budget>>,
+}
+
+/// Distingue un champ absent (`None`) d'un champ `null` (`Some(None)`).
+fn double_option<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(d).map(Some)
 }
 
 async fn validate_timezone(db: &PgPool, tz: &str) -> AppResult<()> {
@@ -116,8 +135,8 @@ async fn create_trip(
     let mut tx = state.db.begin().await?;
     let trip_id: Uuid = sqlx::query_scalar(
         "INSERT INTO trips (name, description, start_date, end_date, timezone,
-                            day_start, day_end, default_modes, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
+                            day_start, day_end, default_modes, interests, pace, budget, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
     )
     .bind(&name)
     .bind(&description)
@@ -127,6 +146,9 @@ async fn create_trip(
     .bind(day_start)
     .bind(day_end)
     .bind(&modes)
+    .bind(normalize_interests(&req.interests))
+    .bind(req.pace.unwrap_or_default().as_str())
+    .bind(req.budget.map(Budget::as_str))
     .bind(current.user.id)
     .fetch_one(&mut *tx)
     .await?;
@@ -188,10 +210,14 @@ async fn update_trip(
     let day_end = req.day_end.unwrap_or(cur.day_end);
     validate::day_window(day_start, day_end)?;
     let modes = normalize_modes(&req.default_modes.unwrap_or(cur.default_modes))?;
+    let interests = normalize_interests(&req.interests.unwrap_or(cur.interests));
+    let pace = req.pace.unwrap_or(cur.pace);
+    let budget = req.budget.unwrap_or(cur.budget);
 
     let updated = sqlx::query(
         "UPDATE trips SET name = $3, description = $4, start_date = $5, end_date = $6,
              timezone = $7, day_start = $8, day_end = $9, default_modes = $10,
+             interests = $11, pace = $12, budget = $13,
              version = version + 1
          WHERE id = $1 AND version = $2",
     )
@@ -205,6 +231,9 @@ async fn update_trip(
     .bind(day_start)
     .bind(day_end)
     .bind(&modes)
+    .bind(&interests)
+    .bind(pace.as_str())
+    .bind(budget.map(Budget::as_str))
     .execute(&state.db)
     .await?;
     if updated.rows_affected() == 0 {

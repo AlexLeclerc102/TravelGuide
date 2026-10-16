@@ -194,6 +194,14 @@ button.danger-outline { color: var(--error); border-color: var(--error); }
 .region-highlights { margin: 0; padding-left: 0.2rem; list-style: none; }
 .region-card p, .region-card .actions { margin: 0; }
 .tag-in-trip { color: var(--ok); }
+.preferences { border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.8rem; display: grid; gap: 0.6rem; margin: 0; }
+.preferences legend { font-weight: 600; padding: 0 0.3rem; }
+.preferences .chips > .small { flex-basis: 100%; }
+.circuits summary { cursor: pointer; }
+.circuit-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.6rem; }
+.circuit-card { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.7rem; display: grid; gap: 0.35rem; }
+.circuit-card ol { margin: 0; padding-left: 1.3rem; display: grid; gap: 0.2rem; }
+.circuit-card p, .circuit-card .actions { margin: 0; }
 .wiki-card { margin-top: 0.6rem; }
 .wiki-card figure { margin: 0 0 0.4rem; }
 .wiki-card img { display: block; width: 100%; height: auto; max-height: 220px; object-fit: cover; border-radius: 6px; }

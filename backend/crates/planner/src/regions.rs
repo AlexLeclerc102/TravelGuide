@@ -27,6 +27,8 @@ pub struct Spot {
     pub location: LatLon,
     /// Langues de l'article Wikipédia.
     pub languages: u32,
+    /// Multiplicateur de poids (ex. 2 pour un lieu qui répond aux envies du groupe).
+    pub boost: f64,
     pub category: usize,
     pub duration_s: u32,
 }
@@ -46,7 +48,7 @@ pub struct Region {
 
 impl Spot {
     pub fn weight(&self) -> f64 {
-        f64::from(self.languages).powf(1.5)
+        f64::from(self.languages).powf(1.5) * self.boost
     }
 }
 
@@ -208,6 +210,7 @@ mod tests {
         Spot {
             location: LatLon::new(at.lat + dlat, at.lon),
             languages,
+            boost: 1.0,
             category,
             duration_s: 2 * 3600,
         }
@@ -241,6 +244,17 @@ mod tests {
         spots.push(spot(CORCOVADO, 0.0, 25, NATURE));
         let out = regions(&spots, 10 * 3600);
         assert_eq!(out[0].members, vec![5]);
+    }
+
+    #[test]
+    fn interests_reorder_regions() {
+        let mut spots = vec![
+            spot(FORTUNA, 0.0, 16, NATURE),
+            spot(CORCOVADO, 0.0, 12, MUSEUM),
+        ];
+        assert_eq!(regions(&spots, 36_000)[0].members, vec![0]);
+        spots[1].boost = 2.0;
+        assert_eq!(regions(&spots, 36_000)[0].members, vec![1]);
     }
 
     #[test]

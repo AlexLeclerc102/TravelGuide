@@ -56,6 +56,11 @@ describe('voyages', () => {
     fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2026-12-01' } })
     fireEvent.change(screen.getByLabelText('Au'), { target: { value: '2026-12-08' } })
     fireEvent.click(screen.getByLabelText('À pied'))
+    // Questionnaire d'envies.
+    fireEvent.click(screen.getByLabelText('Plages'))
+    fireEvent.click(screen.getByLabelText('Gastronomie'))
+    fireEvent.click(screen.getByLabelText('Tranquille'))
+    fireEvent.click(screen.getByLabelText(/Petit budget/))
     fireEvent.click(screen.getByRole('button', { name: 'Créer le voyage' }))
 
     expect(await screen.findByRole('heading', { name: 'Pura Vida' })).toBeInTheDocument()
@@ -65,6 +70,9 @@ describe('voyages', () => {
       start_date: '2026-12-01',
       end_date: '2026-12-08',
       default_modes: ['car', 'walk'],
+      interests: ['beach', 'food'],
+      pace: 'relaxed',
+      budget: 'budget',
     })
     fireEvent.click(screen.getByRole('tab', { name: 'Membres' }))
     expect(screen.getByRole('heading', { name: 'Invitations' })).toBeInTheDocument()

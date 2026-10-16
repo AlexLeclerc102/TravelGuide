@@ -203,3 +203,63 @@ async fn role_based_access_on_trip_routes(db: PgPool) {
         StatusCode::NOT_FOUND
     );
 }
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
+async fn preferences_are_set_at_creation_then_edited(db: PgPool) {
+    let app = TestApp::new(db);
+    let orga = app.register_organizer("orga@example.com", "Orga").await;
+    let res = app
+        .post(
+            "/api/v1/trips",
+            json!({ "name": "Pura Vida", "start_date": "2026-12-01", "end_date": "2026-12-08",
+                    "interests": ["food", "beach", "nature", "beach"], "pace": "relaxed",
+                    "budget": "budget" }),
+            Some(&orga),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{:?}", res.body);
+    // Sans doublon, dans un ordre stable.
+    assert_eq!(res.body["interests"], json!(["nature", "beach", "food"]));
+    assert_eq!(res.body["pace"], "relaxed");
+    assert_eq!(res.body["budget"], "budget");
+    let trip = res.body["id"].as_str().unwrap().to_owned();
+
+    // Champ absent : inchangé ; `null` : plus de préférence.
+    let res = app
+        .patch(
+            &format!("/api/v1/trips/{trip}"),
+            json!({ "version": 1, "name": "Pura Vida !" }),
+            Some(&orga),
+        )
+        .await;
+    assert_eq!(res.body["budget"], "budget");
+    let res = app
+        .patch(
+            &format!("/api/v1/trips/{trip}"),
+            json!({ "version": 2, "budget": null, "pace": "packed", "interests": [] }),
+            Some(&orga),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    assert_eq!(res.body["budget"], serde_json::Value::Null);
+    assert_eq!(res.body["pace"], "packed");
+    assert_eq!(res.body["interests"], json!([]));
+
+    // Valeur inconnue : refusée.
+    let res = app
+        .post(
+            "/api/v1/trips",
+            json!({ "name": "X", "start_date": "2026-12-01", "end_date": "2026-12-08",
+                    "interests": ["casino"] }),
+            Some(&orga),
+        )
+        .await;
+    assert!(res.status.is_client_error(), "{:?}", res.status);
+
+    // Défauts.
+    let id = app.create_trip(&orga, "Défauts").await;
+    let res = app.get(&format!("/api/v1/trips/{id}"), Some(&orga)).await;
+    assert_eq!(res.body["interests"], json!([]));
+    assert_eq!(res.body["pace"], "balanced");
+    assert_eq!(res.body["budget"], serde_json::Value::Null);
+}

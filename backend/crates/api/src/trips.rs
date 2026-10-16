@@ -1,5 +1,6 @@
 //! Voyages, rôles des membres et contrôle d'accès.
 
+use crate::preferences::{parse_interests, parse_pace, Budget, Interest, Pace};
 use std::fmt;
 use std::str::FromStr;
 
@@ -183,6 +184,9 @@ struct TripRow {
     day_start: Time,
     day_end: Time,
     default_modes: Vec<String>,
+    interests: Vec<String>,
+    pace: String,
+    budget: Option<String>,
     version: i64,
     created_at: OffsetDateTime,
     my_role: String,
@@ -208,6 +212,11 @@ pub struct Trip {
     #[schema(value_type = String, example = "19:00")]
     pub day_end: Time,
     pub default_modes: Vec<TransportMode>,
+    /// Centres d'intérêt du groupe (vide : pas encore renseignés).
+    pub interests: Vec<Interest>,
+    pub pace: Pace,
+    /// `null` : pas de préférence.
+    pub budget: Option<Budget>,
     /// Version pour le verrouillage optimiste (à renvoyer lors d'une modification).
     pub version: i64,
     pub my_role: Role,
@@ -229,6 +238,9 @@ impl TryFrom<TripRow> for Trip {
             day_start: r.day_start,
             day_end: r.day_end,
             default_modes: parse_modes(&r.default_modes),
+            interests: parse_interests(&r.interests),
+            pace: parse_pace(&r.pace)?,
+            budget: r.budget.as_deref().and_then(Budget::parse),
             version: r.version,
             my_role: r.my_role.parse()?,
             member_count: r.member_count,
@@ -239,7 +251,8 @@ impl TryFrom<TripRow> for Trip {
 
 const TRIP_SELECT: &str = "
     SELECT t.id, t.name, t.description, t.start_date, t.end_date, t.timezone,
-           t.day_start, t.day_end, t.default_modes, t.version, t.created_at,
+           t.day_start, t.day_end, t.default_modes, t.interests, t.pace, t.budget,
+           t.version, t.created_at,
            m.role AS my_role,
            (SELECT count(*) FROM trip_members mm WHERE mm.trip_id = t.id) AS member_count
     FROM trips t

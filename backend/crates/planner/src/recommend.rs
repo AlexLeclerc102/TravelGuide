@@ -7,6 +7,8 @@
 //!   au-delà de [`MAX_TRAVEL_S`], le lieu est écarté ;
 //! - **notoriété** : nombre de langues de son article Wikipédia (échelle logarithmique) ;
 //! - **goûts du groupe** : moyenne des notes du groupe pour sa catégorie ;
+//! - **envies** : le lieu répond aux envies déclarées (ou au budget, pour un hébergement),
+//!   d'autant plus que le groupe n'a pas encore d'avis sur ce genre de lieux ;
 //! - **informations** : horaires, site web, référence Wikipédia connus ;
 //! - **temps libre** : le jour le plus proche a encore de la place dans l'itinéraire ;
 //! - **saturation** : déjà beaucoup de lieux de cette catégorie, ou des lieux semblables écartés.
@@ -42,6 +44,9 @@ pub const SPREAD_MAX: f64 = 5.0;
 const W_PROXIMITY: f64 = 30.0;
 const W_NOTABILITY: f64 = 25.0;
 const W_TASTE: f64 = 15.0;
+const W_WANTED: f64 = 12.0;
+/// Force d'envie à partir de laquelle elle est citée comme raison.
+const WANTED_REASON: f64 = 0.3;
 const W_COMPLETENESS: f64 = 5.0;
 const W_FREE_TIME: f64 = 10.0;
 const SATURATION_STEP: f64 = 4.0;
@@ -62,6 +67,8 @@ pub struct Candidate {
     pub completeness: f64,
     /// Fermé à chaque date du voyage : écarté.
     pub closed_all_days: bool,
+    /// Répond aux envies du groupe (0 à 1 ; décroît à mesure que les avis arrivent).
+    pub wanted: f64,
 }
 
 /// Un jour du voyage vu par les suggestions.
@@ -101,6 +108,8 @@ pub enum Reason {
     Taste { average: f64 },
     /// Le jour `day` a encore `minutes` libres dans l'itinéraire.
     FreeTime { day: usize, minutes: u32 },
+    /// Répond aux envies (ou au budget) déclarés par le groupe.
+    Wanted,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -175,6 +184,13 @@ fn score_one(index: usize, c: &Candidate, ctx: &Context) -> Option<Scored> {
             (average >= LIKED_AVERAGE).then_some(Reason::Taste { average }),
         ));
     }
+    let wanted = c.wanted.clamp(0.0, 1.0);
+    parts.push((
+        // Une envie compte surtout pour les lieux qui en valent la peine : un parc d'attractions
+        // obscur ne passe pas devant un parc national célèbre.
+        W_WANTED * wanted * (0.4 + 0.6 * notability.min(1.0)),
+        (wanted >= WANTED_REASON).then_some(Reason::Wanted),
+    ));
     parts.push((W_COMPLETENESS * c.completeness.clamp(0.0, 1.0), None));
     let crowded = ctx
         .in_trip
@@ -272,6 +288,7 @@ mod tests {
             languages: 0,
             completeness: 0.0,
             closed_all_days: false,
+            wanted: 0.0,
         }
     }
 
@@ -377,6 +394,21 @@ mod tests {
         let out = recommend(&all, &ctx(None), 2);
         assert_eq!(out.len(), 2);
         assert!(out.iter().any(|s| s.index == 3), "{out:?}");
+    }
+
+    #[test]
+    fn declared_interests_count_and_are_explained() {
+        let plain = cand(ARENAL, NATURE, "Mirador");
+        let mut wanted = cand(ARENAL, FOOD, "Soda");
+        wanted.wanted = 1.0;
+        let out = recommend(&[plain, wanted], &ctx(None), 2);
+        assert_eq!(out[0].index, 1);
+        assert!(out[0].reasons.contains(&Reason::Wanted));
+        // Envie presque remplacée par les avis : plus citée.
+        let mut faded = cand(ARENAL, FOOD, "Soda");
+        faded.wanted = 0.1;
+        let out = recommend(&[faded], &ctx(None), 1);
+        assert!(!out[0].reasons.contains(&Reason::Wanted));
     }
 
     #[test]

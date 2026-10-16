@@ -23,6 +23,7 @@ use crate::error::{AppError, AppResult};
 use crate::opening;
 use crate::places::{Category, OsmRef, OsmType, Place};
 use crate::pois::{self, Poi};
+use crate::preferences::{self, Budget, Interest};
 use crate::trips;
 use crate::wiki::WikiService;
 
@@ -36,6 +37,9 @@ const MAX_DISCOVERY_CANDIDATES: i64 = 500;
 const DISCOVERY_SPREAD: f64 = 1.0;
 /// Nombre d'avis du groupe sur une catégorie pour en déduire ses goûts.
 const TASTE_MIN_REVIEWS: i64 = 2;
+/// Une envie déclarée pèse comme ce nombre d'avis : elle s'efface à mesure que le groupe en
+/// donne sur ce genre de lieux (force = F / (F + avis)).
+const INTEREST_FADE: f64 = 2.0;
 
 /// Une suggestion : le lieu (prêt à être ajouté) et pourquoi il est proposé.
 #[derive(Debug, Serialize, ToSchema)]
@@ -70,6 +74,17 @@ pub enum SuggestionReason {
         date: Date,
         minutes: u32,
     },
+    /// Répond à une envie déclarée du groupe.
+    Interest { interest: Interest },
+    /// Hébergement adapté au budget déclaré.
+    Budget { budget: Budget },
+}
+
+/// Ce à quoi répond un candidat parmi les préférences du voyage.
+#[derive(Debug, Clone, Copy)]
+enum Want {
+    Interest(Interest),
+    Budget(Budget),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
@@ -277,7 +292,7 @@ pub async fn suggest(
            AND ($4::text IS NULL OR o.category = $4)
            AND ($5 OR o.category <> 'lodging')
            AND ($4::text IS NOT NULL OR o.category <> 'food')
-           AND o.osm_tag NOT LIKE 'place=%'
+           AND o.osm_tag NOT LIKE 'place=%' AND o.osm_tag <> 'aeroway=aerodrome'
            AND NOT EXISTS (SELECT 1 FROM pois p WHERE p.trip_id = $6
                            AND p.osm_type = o.osm_type AND p.osm_id = o.osm_id)
            AND NOT EXISTS (SELECT 1 FROM trip_dismissed_suggestions d WHERE d.trip_id = $6
@@ -323,6 +338,21 @@ pub async fn suggest(
     // Un même élément Wikidata porté par plusieurs objets OSM (parc en `boundary=national_park`
     // et `protected_area`…) : le premier (le plus proche ou le plus notable) seulement.
     let mut seen = HashSet::new();
+    // Avis du groupe par catégorie : goûts (assez d'avis), et envies déclarées qui s'effacent
+    // à mesure que les avis arrivent.
+    let reviews: Vec<(String, f64, i64)> = sqlx::query_as(
+        "SELECT p.category, avg(r.rating)::float8, count(*) FROM reviews r
+         JOIN pois p ON p.id = r.poi_id WHERE p.trip_id = $1 GROUP BY p.category",
+    )
+    .bind(trip_id)
+    .fetch_all(db)
+    .await?;
+    let mut reviews_of: HashMap<Category, (f64, i64)> = HashMap::new();
+    for (c, avg, n) in reviews {
+        reviews_of.insert(c.parse()?, (avg, n));
+    }
+    // Envie (ou budget) à laquelle répond chaque candidat retenu, pour la raison affichée.
+    let mut wants: Vec<Option<Want>> = Vec::with_capacity(rows.len());
     for r in rows {
         if r.wikidata.as_ref().is_some_and(|q| !seen.insert(q.clone())) {
             continue;
@@ -334,6 +364,24 @@ pub async fn suggest(
             }
             _ => false,
         };
+        let want = match request {
+            Request::LodgingNear(_) => trip
+                .budget
+                .filter(|b| b.matches(&r.osm_tag))
+                .map(Want::Budget),
+            Request::Places(_) => {
+                preferences::matching(&trip.interests, category, &r.osm_tag).map(Want::Interest)
+            }
+        };
+        let wanted = match want {
+            Some(Want::Budget(_)) => 1.0,
+            Some(Want::Interest(i)) => {
+                let n = reviews_of.get(&i.category()).map_or(0, |&(_, n)| n);
+                INTEREST_FADE / (INTEREST_FADE + n as f64)
+            }
+            None => 0.0,
+        };
+        wants.push(want);
         let known = [
             r.opening_hours.is_some(),
             r.website.is_some() || r.phone.is_some(),
@@ -356,6 +404,7 @@ pub async fn suggest(
             ),
             completeness: known.iter().filter(|&&k| k).count() as f64 / known.len() as f64,
             closed_all_days,
+            wanted,
         });
         places.push(Place {
             display_name: r.name.clone(),
@@ -386,16 +435,10 @@ pub async fn suggest(
         ..Default::default()
     };
     if !lodging {
-        let taste: Vec<(String, f64)> = sqlx::query_as(
-            "SELECT p.category, avg(r.rating)::float8 FROM reviews r JOIN pois p ON p.id = r.poi_id
-             WHERE p.trip_id = $1 GROUP BY p.category HAVING count(*) >= $2",
-        )
-        .bind(trip_id)
-        .bind(TASTE_MIN_REVIEWS)
-        .fetch_all(db)
-        .await?;
-        for (c, avg) in taste {
-            ctx.taste.insert(category_index(c.parse()?), avg);
+        for (&c, &(avg, n)) in &reviews_of {
+            if n >= TASTE_MIN_REVIEWS {
+                ctx.taste.insert(category_index(c), avg);
+            }
         }
         for p in &pois {
             *ctx.in_trip.entry(category_index(p.category)).or_default() += 1;
@@ -442,6 +485,13 @@ pub async fn suggest(
                     Reason::FreeTime { day, minutes } => {
                         date_of(Some(day)).map(|date| SuggestionReason::FreeTime { date, minutes })
                     }
+                    Reason::Wanted => match wants[s.index] {
+                        Some(Want::Interest(interest)) => {
+                            Some(SuggestionReason::Interest { interest })
+                        }
+                        Some(Want::Budget(budget)) => Some(SuggestionReason::Budget { budget }),
+                        None => None,
+                    },
                 })
                 .collect();
             Suggestion {
