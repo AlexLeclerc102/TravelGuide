@@ -74,9 +74,17 @@ function RegionCard({ trip, region: r, pois, canEdit }: { trip: Trip; region: Re
           {r.access === 'boat_or_plane' ? t.regions.expedition : t.regions.nights(r.nights)} ·{' '}
           {r.themes.map((c) => t.categories[c]).join(', ')}
         </span>
+        {r.wikivoyage && (
+          <span className="tag" title={t.regions.wikivoyageTitle(r.name)}>
+            {t.regions.wikivoyage}
+          </span>
+        )}
         {r.in_trip > 0 && <span className="tag tag-in-trip">{t.regions.inTrip(r.in_trip)}</span>}
       </div>
       {r.access === 'boat_or_plane' && <p className="notice small">{t.regions.boatOrPlane}</p>}
+      {r.world_heritage.length > 0 && (
+        <p className="small">{t.regions.worldHeritage(r.world_heritage.join(', '))}</p>
+      )}
       <ul className="small region-highlights">
         {r.highlights.map((h) => {
           const wiki = poiLinks({ ...h, address: '' }).find((l) => l.kind === 'wikipedia')

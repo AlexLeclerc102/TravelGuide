@@ -3,6 +3,9 @@
 //! À partir des tags OSM `wikidata` / `wikipedia` d'un lieu : l'élément Wikidata donne les
 //! articles dans chaque langue et la photo (propriété P18) ; l'API REST de Wikipédia donne le
 //! résumé ; Commons donne la miniature, l'auteur et la licence (attribution obligatoire).
+//!
+//! Les signaux d'intérêt d'un élément ([`Signals`] : langues, guide Wikivoyage, patrimoine
+//! mondial, superficie) et les consultations de ses articles servent au classement des lieux.
 //! Résultats en cache ; le fournisseur réel est [`Wikimedia`], les tests utilisent [`StaticWiki`].
 
 use std::collections::HashMap;
@@ -71,6 +74,21 @@ pub struct Article {
     pub wikibase_item: Option<String>,
 }
 
+/// Ce qui dit d'un élément Wikidata qu'il vaut le détour.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Signals {
+    /// Langues de son article Wikipédia.
+    pub languages: u32,
+    /// Guide Wikivoyage, dans au moins une langue.
+    pub wikivoyage: bool,
+    /// Patrimoine mondial de l'UNESCO (P757, ou P1435 = Q9259).
+    pub world_heritage: bool,
+    /// Superficie (P2046), en km².
+    pub area_km2: Option<f64>,
+    /// Articles dans les langues de [`LANGS`] (`langue`, `titre`), pour les consultations.
+    pub articles: Vec<(String, String)>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum WikiError {
     #[error("Wikipédia est momentanément indisponible")]
@@ -93,9 +111,12 @@ pub trait WikiProvider: Send + Sync {
     async fn article(&self, lang: &str, title: &str) -> Result<Option<Article>, WikiError>;
     /// Miniature et crédits d'une photo Commons.
     async fn image(&self, file: &str) -> Result<Option<WikiImage>, WikiError>;
-    /// Nombre de langues de l'article Wikipédia de chaque élément (au plus 50 à la fois ;
-    /// un élément absent de la réponse n'existe pas).
-    async fn languages(&self, qids: &[String]) -> Result<HashMap<String, u32>, WikiError>;
+    /// Signaux d'intérêt de chaque élément (au plus 50 à la fois ; un élément absent de la
+    /// réponse n'existe pas).
+    async fn signals(&self, qids: &[String]) -> Result<HashMap<String, Signals>, WikiError>;
+    /// Consultations mensuelles moyennes d'un article sur les 12 derniers mois (0 sans
+    /// statistiques).
+    async fn monthly_views(&self, lang: &str, title: &str) -> Result<u32, WikiError>;
 }
 
 /// Projets Wikimedia dont le code de site finit par `wiki` sans être une Wikipédia.
@@ -124,7 +145,7 @@ const CACHE_MAX: usize = 2_000;
 pub struct WikiService {
     provider: Box<dyn WikiProvider>,
     cache: Mutex<HashMap<String, (Instant, Option<WikiSummary>)>>,
-    languages: Mutex<HashMap<String, (Instant, u32)>>,
+    signals: Mutex<HashMap<String, (Instant, Signals)>>,
 }
 
 impl WikiService {
@@ -132,21 +153,21 @@ impl WikiService {
         Self {
             provider: Box::new(provider),
             cache: Mutex::new(HashMap::new()),
-            languages: Mutex::new(HashMap::new()),
+            signals: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Nombre de langues Wikipédia de chaque élément (0 s'il n'existe pas). En cache 7 jours ;
-    /// Wikidata ne répondant pas, les éléments non connus comptent pour 0 (rien n'échoue).
-    pub async fn languages(&self, qids: &[String]) -> HashMap<String, u32> {
+    /// Signaux d'intérêt de chaque élément (par défaut s'il n'existe pas). En cache 7 jours ;
+    /// Wikidata ne répondant pas, les éléments non connus sont absents (rien n'échoue).
+    pub async fn signals(&self, qids: &[String]) -> HashMap<String, Signals> {
         let mut result = HashMap::with_capacity(qids.len());
         let mut missing = vec![];
         {
-            let cache = self.languages.lock().expect("mutex empoisonné");
+            let cache = self.signals.lock().expect("mutex empoisonné");
             for q in qids {
                 match cache.get(q).filter(|(at, _)| at.elapsed() < CACHE_TTL) {
-                    Some(&(_, n)) => {
-                        result.insert(q.clone(), n);
+                    Some((_, s)) => {
+                        result.insert(q.clone(), s.clone());
                     }
                     None => missing.push(q.clone()),
                 }
@@ -155,16 +176,16 @@ impl WikiService {
         missing.sort();
         missing.dedup();
         for chunk in missing.chunks(50) {
-            match self.provider.languages(chunk).await {
-                Ok(found) => {
-                    let mut cache = self.languages.lock().expect("mutex empoisonné");
+            match self.provider.signals(chunk).await {
+                Ok(mut found) => {
+                    let mut cache = self.signals.lock().expect("mutex empoisonné");
                     if cache.len() >= CACHE_MAX * 10 {
                         cache.clear();
                     }
                     for q in chunk {
-                        let n = found.get(q).copied().unwrap_or(0);
-                        cache.insert(q.clone(), (Instant::now(), n));
-                        result.insert(q.clone(), n);
+                        let s = found.remove(q).unwrap_or_default();
+                        cache.insert(q.clone(), (Instant::now(), s.clone()));
+                        result.insert(q.clone(), s);
                     }
                 }
                 Err(WikiError::Unavailable(e)) => {
@@ -176,13 +197,26 @@ impl WikiService {
         result
     }
 
-    /// Comme [`Self::languages`] mais sans cache et en signalant les pannes (au plus 50
+    /// Comme [`Self::signals`] mais sans cache et en signalant les pannes (au plus 50
     /// éléments) : pour la tâche de fond qui stocke la notoriété.
-    pub async fn fetch_languages(
+    pub async fn fetch_signals(
         &self,
         qids: &[String],
-    ) -> Result<HashMap<String, u32>, WikiError> {
-        self.provider.languages(qids).await
+    ) -> Result<HashMap<String, Signals>, WikiError> {
+        self.provider.signals(qids).await
+    }
+
+    /// Consultations mensuelles moyennes de ces articles, toutes langues confondues (sans
+    /// cache, pour la tâche de fond).
+    pub async fn fetch_monthly_views(
+        &self,
+        articles: &[(String, String)],
+    ) -> Result<u32, WikiError> {
+        let mut total = 0u32;
+        for (lang, title) in articles {
+            total = total.saturating_add(self.provider.monthly_views(lang, title).await?);
+        }
+        Ok(total)
     }
 
     /// Présentation d'un lieu d'après ses tags (`wikipedia` au format OSM `langue:Titre`).
@@ -356,14 +390,27 @@ impl Wikimedia {
         Ok(Self { http })
     }
 
-    /// Corps de la réponse, `None` pour un 404.
+    /// Corps de la réponse, `None` pour un 404. Trop de requêtes (429) : une nouvelle tentative
+    /// après le délai demandé (au plus 30 s).
     async fn get(&self, url: reqwest::Url) -> Result<Option<String>, WikiError> {
-        let res = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| WikiError::Unavailable(e.into()))?;
+        let send = || async {
+            self.http
+                .get(url.clone())
+                .send()
+                .await
+                .map_err(|e| WikiError::Unavailable(e.into()))
+        };
+        let mut res = send().await?;
+        if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let wait = res
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok()?.parse::<u64>().ok())
+                .unwrap_or(5)
+                .min(30);
+            tokio::time::sleep(Duration::from_secs(wait)).await;
+            res = send().await?;
+        }
         if res.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
@@ -433,7 +480,7 @@ impl WikiProvider for Wikimedia {
         }
     }
 
-    async fn languages(&self, qids: &[String]) -> Result<HashMap<String, u32>, WikiError> {
+    async fn signals(&self, qids: &[String]) -> Result<HashMap<String, Signals>, WikiError> {
         if qids.is_empty() {
             return Ok(HashMap::new());
         }
@@ -442,15 +489,95 @@ impl WikiProvider for Wikimedia {
             .append_pair("action", "wbgetentities")
             .append_pair("format", "json")
             .append_pair("ids", &qids.join("|"))
-            .append_pair("props", "sitelinks");
+            .append_pair("props", "sitelinks|claims");
         match self.get(url).await? {
-            Some(body) => parse_languages(&body).map_err(unreadable),
+            Some(body) => parse_signals(&body).map_err(unreadable),
             None => Ok(HashMap::new()),
+        }
+    }
+
+    async fn monthly_views(&self, lang: &str, title: &str) -> Result<u32, WikiError> {
+        let (start, end) = last_twelve_months(time::OffsetDateTime::now_utc().date());
+        let (project, title) = (format!("{lang}.wikipedia"), title.replace(' ', "_"));
+        let mut url =
+            reqwest::Url::parse("https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/")
+                .expect("URL");
+        url.path_segments_mut()
+            .map_err(|()| unreadable(anyhow::anyhow!("URL")))?
+            .pop_if_empty()
+            .extend([
+                project.as_str(),
+                "all-access",
+                "user",
+                &title,
+                "monthly",
+                &start,
+                &end,
+            ]);
+        match self.get(url).await? {
+            Some(body) => parse_views(&body)
+                .map(|total| (total / 12) as u32)
+                .map_err(unreadable),
+            // Article sans statistiques (récent, renommé…).
+            None => Ok(0),
         }
     }
 }
 
-fn parse_languages(body: &str) -> anyhow::Result<HashMap<String, u32>> {
+/// Bornes des 12 derniers mois complets, au format de l'API pageviews (`AAAAMMJJ00`).
+fn last_twelve_months(today: time::Date) -> (String, String) {
+    let month = today.year() * 12 + i32::from(u8::from(today.month())) - 1;
+    let first_day = |m: i32| format!("{:04}{:02}0100", m.div_euclid(12), m.rem_euclid(12) + 1);
+    // Le premier jour du mois en cours exclu : l'API s'arrête au mois précédent.
+    let end = today
+        .replace_day(1)
+        .ok()
+        .and_then(|d| d.previous_day())
+        .unwrap_or(today);
+    (
+        first_day(month - 12),
+        format!(
+            "{:04}{:02}{:02}00",
+            end.year(),
+            u8::from(end.month()),
+            end.day()
+        ),
+    )
+}
+
+/// Valeur d'une déclaration : rang « préféré » d'abord, sinon la première non dépréciée.
+fn best_claim<'a>(claims: &'a serde_json::Value, property: &str) -> Option<&'a serde_json::Value> {
+    claims[property]
+        .as_array()?
+        .iter()
+        .filter(|c| c["rank"] != "deprecated")
+        .max_by_key(|c| c["rank"] == "preferred")
+        .map(|c| &c["mainsnak"]["datavalue"]["value"])
+}
+
+/// Superficie en km² d'après une quantité Wikidata (`amount` et unité).
+fn area_km2(value: &serde_json::Value) -> Option<f64> {
+    let amount: f64 = value["amount"]
+        .as_str()?
+        .trim_start_matches('+')
+        .parse()
+        .ok()?;
+    let unit = value["unit"].as_str()?.rsplit('/').next()?;
+    let factor = match unit {
+        "Q712226" => 1.0,         // kilomètre carré
+        "Q35852" => 0.01,         // hectare
+        "Q25343" => 1e-6,         // mètre carré
+        "Q81292" => 0.004_046_86, // acre
+        "Q232291" => 2.589_99,    // mile carré
+        _ => return None,
+    };
+    Some(amount * factor).filter(|a| *a > 0.0 && a.is_finite())
+}
+
+/// Désignation de patrimoine (P1435) « site du patrimoine mondial ».
+const WORLD_HERITAGE_SITE: &str = "Q9259";
+
+fn parse_signals(body: &str) -> anyhow::Result<HashMap<String, Signals>> {
     #[derive(Deserialize)]
     struct Response {
         #[serde(default)]
@@ -462,13 +589,52 @@ fn parse_languages(body: &str) -> anyhow::Result<HashMap<String, u32>> {
         .into_iter()
         .filter(|(_, e)| e.get("missing").is_none())
         .map(|(q, e)| {
-            let n = e["sitelinks"]
-                .as_object()
-                .map(|links| count_wikipedias(links.keys().map(String::as_str)))
-                .unwrap_or(0);
-            (q, n)
+            let sites = e["sitelinks"].as_object();
+            let keys = || {
+                sites
+                    .into_iter()
+                    .flat_map(|links| links.keys().map(String::as_str))
+            };
+            let claims = &e["claims"];
+            let world_heritage = best_claim(claims, "P757").is_some()
+                || claims["P1435"].as_array().is_some_and(|all| {
+                    all.iter().any(|c| {
+                        c["rank"] != "deprecated"
+                            && c["mainsnak"]["datavalue"]["value"]["id"] == WORLD_HERITAGE_SITE
+                    })
+                });
+            let articles = LANGS
+                .iter()
+                .filter_map(|&lang| {
+                    let title = e["sitelinks"][format!("{lang}wiki")]["title"].as_str()?;
+                    Some((lang.to_owned(), title.to_owned()))
+                })
+                .collect();
+            let signals = Signals {
+                languages: count_wikipedias(keys()),
+                wikivoyage: keys().any(|s| s.ends_with("wikivoyage")),
+                world_heritage,
+                area_km2: best_claim(claims, "P2046").and_then(area_km2),
+                articles,
+            };
+            (q, signals)
         })
         .collect())
+}
+
+/// Total des consultations d'une réponse de l'API pageviews.
+fn parse_views(body: &str) -> anyhow::Result<u64> {
+    #[derive(Deserialize)]
+    struct Item {
+        views: u64,
+    }
+    #[derive(Deserialize)]
+    struct Response {
+        #[serde(default)]
+        items: Vec<Item>,
+    }
+    let res: Response = serde_json::from_str(body)?;
+    Ok(res.items.iter().map(|i| i.views).sum())
 }
 
 fn parse_entity(body: &str, qid: &str) -> anyhow::Result<Option<Entity>> {
@@ -494,16 +660,8 @@ fn parse_entity(body: &str, qid: &str) -> anyhow::Result<Option<Entity>> {
                 .collect()
         })
         .unwrap_or_default();
-    let image_file = entity["claims"]["P18"]
-        .as_array()
-        .and_then(|claims| {
-            // Photo « préférée » d'abord, sinon la première non dépréciée.
-            claims
-                .iter()
-                .filter(|c| c["rank"] != "deprecated")
-                .max_by_key(|c| c["rank"] == "preferred")
-        })
-        .and_then(|c| c["mainsnak"]["datavalue"]["value"].as_str())
+    let image_file = best_claim(&entity["claims"], "P18")
+        .and_then(|v| v.as_str())
         .map(str::to_owned);
     Ok(Some(Entity {
         sitelinks,
@@ -588,8 +746,10 @@ pub struct StaticWiki {
     /// Clé `langue:Titre`.
     pub articles: HashMap<String, Article>,
     pub images: HashMap<String, WikiImage>,
-    /// Langues Wikipédia par élément.
-    pub language_counts: HashMap<String, u32>,
+    /// Signaux d'intérêt par élément.
+    pub signals: HashMap<String, Signals>,
+    /// Consultations mensuelles, clé `langue:Titre`.
+    pub views: HashMap<String, u32>,
     pub calls: AtomicUsize,
     pub down: std::sync::atomic::AtomicBool,
 }
@@ -622,12 +782,21 @@ impl WikiProvider for std::sync::Arc<StaticWiki> {
         Ok(self.images.get(file).cloned())
     }
 
-    async fn languages(&self, qids: &[String]) -> Result<HashMap<String, u32>, WikiError> {
+    async fn signals(&self, qids: &[String]) -> Result<HashMap<String, Signals>, WikiError> {
         self.enter()?;
         Ok(qids
             .iter()
-            .filter_map(|q| Some((q.clone(), *self.language_counts.get(q)?)))
+            .filter_map(|q| Some((q.clone(), self.signals.get(q)?.clone())))
             .collect())
+    }
+
+    async fn monthly_views(&self, lang: &str, title: &str) -> Result<u32, WikiError> {
+        self.enter()?;
+        Ok(self
+            .views
+            .get(&format!("{lang}:{title}"))
+            .copied()
+            .unwrap_or(0))
     }
 }
 
@@ -788,30 +957,87 @@ mod tests {
     }
 
     #[test]
-    fn counts_wikipedia_languages() {
+    fn reads_signals_of_interest() {
+        // Extrait de réponses réelles (parc national de l'île Cocos, La Cangreja), abrégé.
         let body = r#"{"entities":{
-            "Q641588":{"id":"Q641588","sitelinks":{"enwiki":{},"eswiki":{},"frwiki":{},
-                "commonswiki":{},"enwikivoyage":{},"zh_min_nanwiki":{}}},
+            "Q6062995":{"id":"Q6062995","sitelinks":{"enwiki":{"title":"Cocos Island National Park"},
+                "eswiki":{"title":"Parque nacional Isla del Coco"},"commonswiki":{"title":"x"},
+                "enwikivoyage":{"title":"Cocos Island"},"zh_min_nanwiki":{"title":"y"}},
+                "claims":{
+                  "P757":[{"mainsnak":{"datavalue":{"value":"820","type":"string"}},"rank":"normal"}],
+                  "P2046":[{"mainsnak":{"datavalue":{"value":{"amount":"+2400",
+                      "unit":"http://www.wikidata.org/entity/Q712226"}}},"rank":"normal"}]}},
+            "Q4552189":{"id":"Q4552189","sitelinks":{"enwiki":{"title":"La Cangreja National Park"}},
+                "claims":{
+                  "P1435":[{"mainsnak":{"datavalue":{"value":{"id":"Q19683138"}}},"rank":"normal"}],
+                  "P2046":[
+                    {"mainsnak":{"datavalue":{"value":{"amount":"+1","unit":"http://www.wikidata.org/entity/Q712226"}}},"rank":"deprecated"},
+                    {"mainsnak":{"datavalue":{"value":{"amount":"+2519","unit":"http://www.wikidata.org/entity/Q35852"}}},"rank":"normal"}]}},
+            "Q9":{"id":"Q9","sitelinks":{},"claims":{
+                "P1435":[{"mainsnak":{"datavalue":{"value":{"id":"Q9259"}}},"rank":"normal"}],
+                "P2046":[{"mainsnak":{"datavalue":{"value":{"amount":"+3","unit":"http://www.wikidata.org/entity/Q11573"}}},"rank":"normal"}]}},
             "Q1":{"id":"Q1","missing":""}}}"#;
-        let counts = parse_languages(body).unwrap();
-        assert_eq!(counts.get("Q641588"), Some(&4));
-        assert_eq!(counts.get("Q1"), None);
+        let signals = parse_signals(body).unwrap();
+        let cocos = &signals["Q6062995"];
+        assert_eq!(cocos.languages, 3);
+        assert!(cocos.wikivoyage && cocos.world_heritage);
+        assert_eq!(cocos.area_km2, Some(2400.0));
+        assert_eq!(
+            cocos.articles,
+            vec![
+                ("en".to_owned(), "Cocos Island National Park".to_owned()),
+                ("es".to_owned(), "Parque nacional Isla del Coco".to_owned()),
+            ]
+        );
+        // Site Ramsar : pas le patrimoine mondial ; superficie en hectares, rang déprécié ignoré.
+        let cangreja = &signals["Q4552189"];
+        assert!(!cangreja.wikivoyage && !cangreja.world_heritage);
+        assert!((cangreja.area_km2.unwrap() - 25.19).abs() < 1e-9);
+        // Patrimoine mondial par P1435 ; unité inconnue (mètre) : pas de superficie.
+        assert!(signals["Q9"].world_heritage);
+        assert_eq!(signals["Q9"].area_km2, None);
+        assert!(!signals.contains_key("Q1"));
+    }
+
+    #[test]
+    fn page_views_cover_the_last_twelve_full_months() {
+        let date = |y, m: u8, d| {
+            time::Date::from_calendar_date(y, time::Month::try_from(m).unwrap(), d).unwrap()
+        };
+        assert_eq!(
+            last_twelve_months(date(2026, 10, 16)),
+            ("2025100100".to_owned(), "2026093000".to_owned())
+        );
+        assert_eq!(
+            last_twelve_months(date(2026, 1, 1)),
+            ("2025010100".to_owned(), "2025123100".to_owned())
+        );
+        let body = r#"{"items":[{"project":"en.wikipedia","timestamp":"2025100100","views":1646},
+            {"project":"en.wikipedia","timestamp":"2025110100","views":1867}]}"#;
+        assert_eq!(parse_views(body).unwrap(), 3513);
     }
 
     #[tokio::test]
-    async fn language_counts_are_cached_and_never_fail() {
+    async fn signals_are_cached_and_never_fail() {
         let mut wiki = StaticWiki::default();
-        wiki.language_counts.insert("Q641588".into(), 40);
+        wiki.signals.insert(
+            "Q641588".into(),
+            Signals {
+                languages: 40,
+                wikivoyage: true,
+                ..Default::default()
+            },
+        );
         let wiki = Arc::new(wiki);
         let svc = WikiService::new(wiki.clone());
         let qids = vec!["Q641588".to_owned(), "Q1".to_owned()];
-        let counts = svc.languages(&qids).await;
-        assert_eq!(counts["Q641588"], 40);
-        assert_eq!(counts["Q1"], 0);
+        let found = svc.signals(&qids).await;
+        assert_eq!(found["Q641588"].languages, 40);
+        assert_eq!(found["Q1"], Signals::default());
         wiki.down.store(true, Ordering::SeqCst);
         // Depuis le cache ; un élément inconnu sans réponse : absent (compté 0 par l'appelant).
-        let again = svc.languages(&[qids[0].clone(), "Q2".to_owned()]).await;
-        assert_eq!(again.get("Q641588"), Some(&40));
+        let again = svc.signals(&[qids[0].clone(), "Q2".to_owned()]).await;
+        assert!(again["Q641588"].wikivoyage);
         assert_eq!(again.get("Q2"), None);
     }
 

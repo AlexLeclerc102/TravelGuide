@@ -1,7 +1,8 @@
 //! Régions à découvrir : les lieux notables du pays regroupés autour de bases d'une journée.
 //!
 //! Chaque lieu pèse selon sa notoriété (langues de son article Wikipédia, puissance 1,5 : un
-//! lieu célèbre l'emporte sur plusieurs lieux obscurs). On retient d'abord le lieu dont le
+//! lieu célèbre l'emporte sur plusieurs lieux obscurs), majorée par ses signaux d'intérêt
+//! ([`appeal`]) et les envies du groupe. On retient d'abord le lieu dont le
 //! voisinage (rayon [`RADIUS_M`]) pèse le plus : ce voisinage forme une région. On recommence
 //! avec les lieux restants, jusqu'à [`MAX_REGIONS`] régions ou une région trop légère. Simple,
 //! déterministe, et le nombre de régions n'a pas à être fixé à l'avance (contrairement aux
@@ -29,6 +30,8 @@ pub struct Spot {
     pub languages: u32,
     /// Multiplicateur de poids (ex. 2 pour un lieu qui répond aux envies du groupe).
     pub boost: f64,
+    /// Multiplicateur des signaux d'intérêt (voir [`appeal`]).
+    pub appeal: f64,
     pub category: usize,
     pub duration_s: u32,
 }
@@ -48,9 +51,20 @@ pub struct Region {
 
 impl Spot {
     pub fn weight(&self) -> f64 {
-        f64::from(self.languages).powf(1.5) * self.boost
+        f64::from(self.languages).powf(1.5) * self.boost * self.appeal
     }
 }
+
+/// Multiplicateur de poids d'un lieu d'après ses signaux d'intérêt : guide Wikivoyage,
+/// patrimoine mondial, popularité actuelle (0 à 1, voir [`crate::recommend::popularity`]).
+pub fn appeal(wikivoyage: bool, world_heritage: bool, popularity: f64) -> f64 {
+    1.0 + 0.3 * f64::from(u8::from(wikivoyage))
+        + 0.5 * f64::from(u8::from(world_heritage))
+        + 0.5 * popularity.clamp(0.0, 1.0)
+}
+
+/// Facteur de taille d'une localité décrite par un guide Wikivoyage : on y loge volontiers.
+pub const GUIDE_SIZE_FACTOR: f64 = 0.7;
 
 /// Localité où loger (candidate pour la base d'une région).
 #[derive(Debug, Clone)]
@@ -211,6 +225,7 @@ mod tests {
             location: LatLon::new(at.lat + dlat, at.lon),
             languages,
             boost: 1.0,
+            appeal: 1.0,
             category,
             duration_s: 2 * 3600,
         }
@@ -254,6 +269,19 @@ mod tests {
         ];
         assert_eq!(regions(&spots, 36_000)[0].members, vec![0]);
         spots[1].boost = 2.0;
+        assert_eq!(regions(&spots, 36_000)[0].members, vec![1]);
+    }
+
+    #[test]
+    fn signals_of_interest_reorder_regions() {
+        let mut spots = vec![
+            spot(FORTUNA, 0.0, 16, NATURE),
+            spot(CORCOVADO, 0.0, 12, NATURE),
+        ];
+        assert_eq!(appeal(false, false, 0.0), 1.0);
+        // Patrimoine mondial, guide et très consulté : il passe devant un lieu un peu plus connu.
+        spots[1].appeal = appeal(true, true, 1.0);
+        assert!((spots[1].appeal - 2.3).abs() < 1e-9);
         assert_eq!(regions(&spots, 36_000)[0].members, vec![1]);
     }
 

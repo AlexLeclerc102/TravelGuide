@@ -360,6 +360,64 @@ async fn an_empty_trip_discovers_the_most_notable_places_of_the_country(db: PgPo
 }
 
 #[sqlx::test(migrator = "api::MIGRATOR")]
+async fn signals_of_interest_are_given_as_reasons(db: PgPool) {
+    let app = TestApp::new(db);
+    let orga = app.register_organizer("orga@example.com", "Orga").await;
+    let trip = app.create_trip(&orga, "Vide").await;
+    seed(&app).await;
+    seed_notability(&app).await;
+    // Corcovado : guide Wikivoyage, très consulté, 424 km² ; Arenal : patrimoine mondial
+    // (fictif) et une superficie qui ne compte pas (un volcan n'est pas un espace protégé).
+    sqlx::raw_sql(
+        "UPDATE wikidata_notability SET wikivoyage = true, area_km2 = 424.4,
+             monthly_views = 5200 WHERE qid = 'Q1130598';
+         UPDATE wikidata_notability SET world_heritage = true, area_km2 = 33
+             WHERE qid = 'Q641588';",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let res = app
+        .get(&format!("/api/v1/trips/{trip}/suggestions"), Some(&orga))
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    let reasons = |name: &str| -> Vec<Value> {
+        res.body["suggestions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["place"]["name"] == name)
+            .unwrap()["reasons"]
+            .as_array()
+            .unwrap()
+            .clone()
+    };
+    let corcovado = reasons("Corcovado");
+    for r in [
+        json!({ "kind": "wikivoyage" }),
+        json!({ "kind": "popular", "monthly_views": 5200 }),
+        json!({ "kind": "protected_area", "km2": 424, "national_park": true }),
+    ] {
+        assert!(corcovado.contains(&r), "{r} {corcovado:?}");
+    }
+    let arenal = reasons("Volcán Arenal");
+    assert!(
+        arenal.contains(&json!({ "kind": "world_heritage" })),
+        "{arenal:?}"
+    );
+    assert!(!arenal.iter().any(|r| r["kind"] == "protected_area"));
+
+    // Régions : le site du patrimoine mondial est cité.
+    let res = app
+        .get(&format!("/api/v1/trips/{trip}/regions"), Some(&orga))
+        .await;
+    let regions = res.body["regions"].as_array().unwrap();
+    assert_eq!(regions[0]["name"], "La Fortuna");
+    assert_eq!(regions[0]["world_heritage"], json!(["Volcán Arenal"]));
+    assert_eq!(regions[1]["world_heritage"], json!([]));
+}
+
+#[sqlx::test(migrator = "api::MIGRATOR")]
 async fn regions_group_notable_places_around_a_place_to_stay(db: PgPool) {
     let app = TestApp::new(db);
     let (orga, viewer, trip, _area) = setup(&app).await;
@@ -549,7 +607,7 @@ async fn regions_without_road_access_are_reached_by_boat_or_plane(db: PgPool) {
 async fn notability_is_refreshed_in_the_background(db: PgPool) {
     use std::sync::Arc;
 
-    use api::wiki::{StaticWiki, WikiService};
+    use api::wiki::{Signals, StaticWiki, WikiService};
 
     let app = TestApp::new(db);
     seed(&app).await;
@@ -558,21 +616,45 @@ async fn notability_is_refreshed_in_the_background(db: PgPool) {
         .await
         .unwrap();
     let mut wiki = StaticWiki::default();
-    wiki.language_counts.insert("Q641588".into(), 40);
+    wiki.signals.insert(
+        "Q641588".into(),
+        Signals {
+            languages: 40,
+            wikivoyage: true,
+            world_heritage: false,
+            area_km2: Some(121.0),
+            articles: vec![
+                ("en".into(), "Arenal Volcano".into()),
+                ("es".into(), "Volcán Arenal".into()),
+            ],
+        },
+    );
+    wiki.views.insert("en:Arenal Volcano".into(), 4_000);
+    wiki.views.insert("es:Volcán Arenal".into(), 1_500);
     let wiki = Arc::new(wiki);
     let service = WikiService::new(wiki.clone());
 
-    // Corcovado est inconnu de Wikidata : 0 langue, mais stocké (pas redemandé).
+    // Corcovado est inconnu de Wikidata : 0 langue, mais stocké (pas redemandé). Arenal : ses
+    // signaux, et les consultations de ses articles en anglais et en espagnol additionnées.
     assert_eq!(
         api::notability::refresh(&app.db, &service).await.unwrap(),
         2
     );
-    let stored: Vec<(String, i32)> =
-        sqlx::query_as("SELECT qid, languages FROM wikidata_notability ORDER BY qid")
-            .fetch_all(&app.db)
-            .await
-            .unwrap();
-    assert_eq!(stored, vec![("Q1130598".into(), 0), ("Q641588".into(), 40)]);
+    type Row = (String, i32, bool, bool, Option<f64>, i32);
+    let stored: Vec<Row> = sqlx::query_as(
+        "SELECT qid, languages, wikivoyage, world_heritage, area_km2, monthly_views
+         FROM wikidata_notability ORDER BY qid",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        vec![
+            ("Q1130598".into(), 0, false, false, None, 0),
+            ("Q641588".into(), 40, true, false, Some(121.0), 5_500),
+        ]
+    );
     assert_eq!(
         api::notability::refresh(&app.db, &service).await.unwrap(),
         0

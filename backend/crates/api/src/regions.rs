@@ -2,13 +2,16 @@
 //!
 //! Les lieux importés dont l'article Wikipédia existe dans plusieurs langues sont regroupés
 //! par [`planner::regions`] ; chaque région est nommée d'après la localité où loger
-//! ([`regions::best_base`]) et présentée avec ses points forts, prêts à être ajoutés.
+//! ([`regions::best_base`], qui préfère une localité décrite par Wikivoyage) et présentée avec
+//! ses points forts, prêts à être ajoutés. Les signaux d'intérêt (patrimoine mondial, guide,
+//! consultations) pèsent sur le classement, et la fiche dit lesquels.
 //!
 //! L'accès est vérifié avec le moteur de routage : une base qu'aucune route ne relie au réseau
 //! des autres (île Cocos…) se rejoint en bateau ou en avion, ce que la fiche dit clairement.
 
 use planner::geo::{haversine_m, LatLon};
-use planner::regions::{self, Settlement, Spot, RADIUS_M};
+use planner::recommend::popularity;
+use planner::regions::{self, Settlement, Spot, GUIDE_SIZE_FACTOR, RADIUS_M};
 use serde::Serialize;
 use sqlx::PgPool;
 use time::Time;
@@ -74,6 +77,10 @@ pub struct Region {
     pub highlights: Vec<Place>,
     /// Lieux du voyage (hors hébergements) déjà dans la région.
     pub in_trip: usize,
+    /// Lieux de la région inscrits au patrimoine mondial de l'UNESCO.
+    pub world_heritage: Vec<String>,
+    /// La localité où loger a un guide Wikivoyage.
+    pub wikivoyage: bool,
     /// Intérêt de la région pour un circuit : ses meilleurs points forts seulement (on ne voit
     /// pas tout d'une capitale en une étape), notoriété pondérée par les envies.
     #[serde(skip)]
@@ -102,6 +109,9 @@ struct SpotRow {
     wikidata: Option<String>,
     wikipedia: Option<String>,
     languages: i32,
+    wikivoyage: bool,
+    world_heritage: bool,
+    monthly_views: i32,
 }
 
 #[derive(sqlx::FromRow)]
@@ -114,6 +124,8 @@ struct SettlementRow {
     lon: f64,
     /// Hébergements connus à moins de 2 km.
     lodging: i64,
+    /// Guide Wikivoyage de la localité.
+    wikivoyage: bool,
 }
 
 /// Localité où loger pour une région : parmi les villes et villages autour, hors celles
@@ -129,8 +141,10 @@ async fn base(
          SELECT s.name, s.osm_type, s.osm_id, s.osm_tag,
                 ST_Y(s.location::geometry) AS lat, ST_X(s.location::geometry) AS lon,
                 (SELECT count(*) FROM osm_places h
-                 WHERE h.category = 'lodging' AND ST_DWithin(h.location, s.location, 2000)) AS lodging
-         FROM osm_places s, here
+                 WHERE h.category = 'lodging' AND ST_DWithin(h.location, s.location, 2000)) AS lodging,
+                coalesce(n.wikivoyage, false) AS wikivoyage
+         FROM osm_places s CROSS JOIN here
+         LEFT JOIN wikidata_notability n ON n.qid = s.wikidata
          WHERE s.osm_tag IN ('place=city', 'place=town', 'place=village')
            AND ST_DWithin(s.location, here.g, $3)
          ORDER BY s.osm_type, s.osm_id",
@@ -146,12 +160,13 @@ async fn base(
         .map(|r| Settlement {
             location: LatLon::new(r.lat, r.lon),
             lodging: r.lodging.clamp(0, i64::from(u32::MAX)) as u32,
-            // Les quartiers d'une ville sont souvent des « villages » : la ville prime.
+            // Les quartiers d'une ville sont souvent des « villages » : la ville prime. Une
+            // localité décrite par Wikivoyage accueille des voyageurs.
             size_factor: match r.osm_tag.as_str() {
                 "place=city" => 0.5,
                 "place=town" => 0.8,
                 _ => 1.0,
-            },
+            } * if r.wikivoyage { GUIDE_SIZE_FACTOR } else { 1.0 },
         })
         .collect();
     Ok(regions::best_base(spots, region, &candidates).map(|i| rows.swap_remove(i)))
@@ -197,7 +212,10 @@ pub async fn regions(
                 o.osm_type, o.osm_id, o.name, o.category, o.osm_tag,
                 ST_Y(o.location::geometry) AS lat, ST_X(o.location::geometry) AS lon,
                 o.opening_hours, o.website, o.phone, o.email, o.wikidata, o.wikipedia,
-                coalesce(n.languages, $4) AS languages
+                coalesce(n.languages, $4) AS languages,
+                coalesce(n.wikivoyage, false) AS wikivoyage,
+                coalesce(n.world_heritage, false) AS world_heritage,
+                coalesce(n.monthly_views, 0) AS monthly_views
          FROM osm_places o LEFT JOIN wikidata_notability n ON n.qid = o.wikidata
          WHERE (n.languages >= $1 OR ($3 AND o.osm_tag = 'natural=beach'))
            AND o.category NOT IN ('lodging', 'food')
@@ -226,7 +244,9 @@ pub async fn regions(
 
     let mut places = Vec::with_capacity(rows.len());
     let mut spots = Vec::with_capacity(rows.len());
+    let mut world_heritage = Vec::with_capacity(rows.len());
     for r in rows {
+        world_heritage.push(r.world_heritage);
         let category: Category = r.category.parse()?;
         spots.push(Spot {
             location: LatLon::new(r.lat, r.lon),
@@ -236,6 +256,11 @@ pub async fn regions(
             } else {
                 1.0
             },
+            appeal: regions::appeal(
+                r.wikivoyage,
+                r.world_heritage,
+                popularity(r.monthly_views.max(0) as u32),
+            ),
             category: category_index(category),
             duration_s: category.default_duration_min().max(0) as u32 * 60,
         });
@@ -272,7 +297,7 @@ pub async fn regions(
     let mut out = vec![];
     let mut used = vec![];
     for region in regions::regions(&spots, day_budget_s) {
-        let (name, lat, lon, osm) = match base(db, &spots, &region, &used).await? {
+        let (name, lat, lon, osm, wikivoyage) = match base(db, &spots, &region, &used).await? {
             Some(s) => {
                 used.push((s.osm_type.clone(), s.osm_id));
                 (
@@ -283,13 +308,22 @@ pub async fn regions(
                         osm_type,
                         id: s.osm_id,
                     }),
+                    s.wikivoyage,
                 )
             }
             None => {
                 let top = &places[region.members[0]];
-                (top.name.clone(), region.center.lat, region.center.lon, None)
+                let at = region.center;
+                (top.name.clone(), at.lat, at.lon, None, false)
             }
         };
+        // Un même site sous plusieurs objets (parc et volcan…) : cité une fois.
+        let mut unesco: Vec<String> = vec![];
+        for &i in region.members.iter().filter(|&&i| world_heritage[i]) {
+            if !unesco.iter().any(|n| same_place(n, &places[i].name)) {
+                unesco.push(places[i].name.clone());
+            }
+        }
         let mut highlights: Vec<Place> = vec![];
         for &i in &region.members {
             let p = &places[i];
@@ -324,6 +358,8 @@ pub async fn regions(
                 .iter()
                 .filter(|&&v| haversine_m(v, region.center) <= RADIUS_M)
                 .count(),
+            world_heritage: unesco,
+            wikivoyage,
             // Ses meilleurs points forts, plus la moitié de tout ce qui répond aux envies du groupe
             // (une côte pleine de plages vaut le détour pour qui les aime).
             weight: region

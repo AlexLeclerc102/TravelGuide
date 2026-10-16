@@ -3,7 +3,8 @@
 //! Les candidats viennent de `osm_places` (extrait OSM importé), autour des points de départ
 //! de chaque jour (hébergements, y compris les zones à préciser ; sinon les lieux du voyage).
 //! Le score est calculé par [`planner::recommend`] à partir des goûts du groupe (notes par
-//! catégorie), de l'itinéraire (temps libre par jour), de la notoriété Wikipédia et des
+//! catégorie), de l'itinéraire (temps libre par jour), de la notoriété Wikipédia, des signaux
+//! d'intérêt (guide Wikivoyage, patrimoine mondial, superficie des parcs, consultations) et des
 //! suggestions écartées.
 
 use std::collections::{HashMap, HashSet};
@@ -25,7 +26,7 @@ use crate::places::{Category, OsmRef, OsmType, Place};
 use crate::pois::{self, Poi};
 use crate::preferences::{self, Budget, Interest};
 use crate::trips;
-use crate::wiki::WikiService;
+use crate::wiki::{Signals, WikiService};
 
 /// Nombre de suggestions renvoyées.
 const LIMIT: usize = 30;
@@ -66,6 +67,14 @@ pub enum SuggestionReason {
     },
     /// Article Wikipédia dans `languages` langues.
     Notable { languages: u32 },
+    /// Articles Wikipédia (fr, en, es) consultés `monthly_views` fois par mois.
+    Popular { monthly_views: u32 },
+    /// Guide Wikivoyage.
+    Wikivoyage,
+    /// Patrimoine mondial de l'UNESCO.
+    WorldHeritage,
+    /// Parc national (ou autre espace protégé) de `km2` km².
+    ProtectedArea { km2: u32, national_park: bool },
     /// Le groupe note bien cette catégorie (moyenne `average`).
     Taste { category: Category, average: f64 },
     /// Le jour `date` a encore `minutes` libres dans l'itinéraire.
@@ -128,8 +137,20 @@ struct OsmRow {
     email: Option<String>,
     wikidata: Option<String>,
     wikipedia: Option<String>,
-    /// Notoriété déjà connue (`wikidata_notability`).
+    /// Notoriété et signaux déjà connus (`wikidata_notability`).
     languages: Option<i32>,
+    wikivoyage: Option<bool>,
+    world_heritage: Option<bool>,
+    area_km2: Option<f64>,
+    monthly_views: Option<i32>,
+}
+
+/// Espace protégé, dont la superficie dit l'ampleur (celle d'une commune ne dit rien).
+fn protected_area(osm_tag: &str) -> bool {
+    matches!(
+        osm_tag,
+        "boundary=national_park" | "boundary=protected_area" | "leisure=nature_reserve"
+    )
 }
 
 fn location(p: &Poi) -> LatLon {
@@ -268,7 +289,8 @@ pub async fn suggest(
     let (area, order) = if discovery {
         (
             "true",
-            "coalesce(n.languages, 0) DESC, (o.wikidata IS NOT NULL) DESC",
+            "coalesce(n.world_heritage, false) DESC, coalesce(n.languages, 0) DESC,
+             coalesce(n.monthly_views, 0) DESC, (o.wikidata IS NOT NULL) DESC",
         )
     } else {
         (
@@ -284,7 +306,7 @@ pub async fn suggest(
          SELECT o.osm_type, o.osm_id, o.name, o.category, o.osm_tag,
                 ST_Y(o.location::geometry) AS lat, ST_X(o.location::geometry) AS lon,
                 o.opening_hours, o.website, o.phone, o.email, o.wikidata, o.wikipedia,
-                n.languages
+                n.languages, n.wikivoyage, n.world_heritage, n.area_km2, n.monthly_views
          FROM osm_places o
          CROSS JOIN anchors
          LEFT JOIN wikidata_notability n ON n.qid = o.wikidata
@@ -314,13 +336,14 @@ pub async fn suggest(
     .fetch_all(db)
     .await?;
 
-    // Notoriété : stockée, sinon demandée à la volée (lieux pas encore rafraîchis).
+    // Notoriété et signaux : stockés, sinon demandés à la volée (lieux pas encore rafraîchis ;
+    // sans les consultations, réservées à la tâche de fond).
     let unknown: Vec<String> = rows
         .iter()
         .filter(|r| r.languages.is_none())
         .filter_map(|r| r.wikidata.clone())
         .collect();
-    let languages = wiki.languages(&unknown).await;
+    let fetched = wiki.signals(&unknown).await;
     // Pays le plus fréquent parmi les lieux du voyage (jours fériés des horaires).
     let country = {
         let mut counts: HashMap<&str, usize> = HashMap::new();
@@ -382,6 +405,21 @@ pub async fn suggest(
             None => 0.0,
         };
         wants.push(want);
+        let signals = match r.languages {
+            Some(languages) => Signals {
+                languages: languages.max(0) as u32,
+                wikivoyage: r.wikivoyage.unwrap_or(false),
+                world_heritage: r.world_heritage.unwrap_or(false),
+                area_km2: r.area_km2,
+                articles: vec![],
+            },
+            None => r
+                .wikidata
+                .as_ref()
+                .and_then(|q| fetched.get(q))
+                .cloned()
+                .unwrap_or_default(),
+        };
         let known = [
             r.opening_hours.is_some(),
             r.website.is_some() || r.phone.is_some(),
@@ -392,19 +430,14 @@ pub async fn suggest(
             category: category_index(category),
             name_key: r.name.trim().to_lowercase(),
             duration_s: category.default_duration_min().max(0) as u32 * 60,
-            languages: r.languages.map_or_else(
-                || {
-                    r.wikidata
-                        .as_ref()
-                        .and_then(|q| languages.get(q))
-                        .copied()
-                        .unwrap_or(0)
-                },
-                |n| n.max(0) as u32,
-            ),
+            languages: signals.languages,
             completeness: known.iter().filter(|&&k| k).count() as f64 / known.len() as f64,
             closed_all_days,
             wanted,
+            wikivoyage: signals.wikivoyage,
+            world_heritage: signals.world_heritage,
+            protected_area_km2: signals.area_km2.filter(|_| protected_area(&r.osm_tag)),
+            monthly_views: r.monthly_views.unwrap_or(0).max(0) as u32,
         });
         places.push(Place {
             display_name: r.name.clone(),
@@ -466,9 +499,11 @@ pub async fn suggest(
     let suggestions = recommend::recommend(&candidates, &ctx, LIMIT)
         .into_iter()
         .map(|s| {
-            let category = places[s.index]
+            let (category, national_park) = places[s.index]
                 .as_ref()
-                .map_or(Category::Other, |p| p.category);
+                .map_or((Category::Other, false), |p| {
+                    (p.category, p.osm_tag == "boundary=national_park")
+                });
             let reasons = s
                 .reasons
                 .iter()
@@ -478,6 +513,14 @@ pub async fn suggest(
                         minutes,
                     }),
                     Reason::Notable { languages } => Some(SuggestionReason::Notable { languages }),
+                    Reason::Popular { monthly_views } => {
+                        Some(SuggestionReason::Popular { monthly_views })
+                    }
+                    Reason::Wikivoyage => Some(SuggestionReason::Wikivoyage),
+                    Reason::WorldHeritage => Some(SuggestionReason::WorldHeritage),
+                    Reason::LargeArea { km2 } => {
+                        Some(SuggestionReason::ProtectedArea { km2, national_park })
+                    }
                     Reason::Taste { average } => Some(SuggestionReason::Taste {
                         category,
                         average: (average * 10.0).round() / 10.0,

@@ -214,22 +214,33 @@
   `wikidata_notability` (indépendante des réimports), demandées en tâche de fond après l'import
   puis chaque jour (50 éléments par requête, 250 ms entre deux, rafraîchies après 30 jours ; ~500
   éléments en 8 s pour le Costa Rica). Les lieux pas encore rafraîchis sont demandés à la volée.
+- **Signaux d'intérêt** (migration 0014, mêmes requêtes `wbgetentities` avec `claims`) : guide
+  Wikivoyage (lien vers un site `*wikivoyage`), patrimoine mondial (P757, ou P1435 = Q9259 ; les
+  sites Ramsar et autres désignations ne comptent pas), superficie (P2046, convertie en km²,
+  retenue seulement pour `boundary=national_park|protected_area` et `leisure=nature_reserve`),
+  consultations mensuelles moyennes des articles fr, en, es sur les 12 derniers mois complets
+  (API pageviews, une requête par article, 50 ms entre deux ; tâche de fond seulement).
 - **Score** (`planner::recommend`, pur et testé) : proximité (trajet estimé à vol d'oiseau majoré,
   écarté au-delà de 2 h 30), notoriété (langues Wikipédia de l'élément Wikidata, en cache 7 jours,
   0 si Wikidata ne répond pas), goûts du groupe (moyenne par catégorie, au moins 2 avis), données
-  connues (horaires, contact, Wikipédia), temps libre du jour d'après l'itinéraire, pénalités de
+  connues (horaires, contact, Wikipédia), signaux d'intérêt (consultations : 8 points, échelle
+  log jusqu'à 20 000/mois, cité dès 1 000 ; guide Wikivoyage : 5 ; patrimoine mondial : 8 ;
+  superficie d'un espace protégé : 5, log jusqu'à 1 000 km², citée dès 50 km²), temps libre du jour d'après l'itinéraire, pénalités de
   saturation (catégorie déjà très présente, refus du groupe). Fermé à chaque date : écarté. Puis
   diversification (même catégorie à moins de 5 km pénalisée) et doublons homonymes supprimés.
   Chaque critère qui compte donne une raison affichée (« ≈ 15 min de La Fortuna (mer. 2 déc.) »).
 - **Régions** (`GET /trips/{id}/regions`, `planner::regions`) : pour savoir où aller. Lieux d'au
-  moins 2 langues, poids = langues^1,5 (un lieu célèbre l'emporte sur plusieurs obscurs).
+  moins 2 langues, poids = langues^1,5 (un lieu célèbre l'emporte sur plusieurs obscurs)
+  × (1 + 0,3 guide Wikivoyage + 0,5 patrimoine mondial + 0,5 popularité).
   Glouton : le lieu dont le voisinage de 25 km pèse le plus forme une région avec ce voisinage,
   et ainsi de suite (12 régions au plus, poids minimal ≈ un lieu en 8 langues). Base : la
   localité (`place=city|town|village`, 50 km) qui minimise la distance moyenne pondérée aux
-  lieux, divisée par 1 + ln(1 + hébergements à 2 km), favorisant les villes ; une localité ne sert
+  lieux, divisée par 1 + ln(1 + hébergements à 2 km), favorisant les villes et celles qui ont un
+  guide Wikivoyage (× 0,7, signalé sur la fiche) ; une localité ne sert
   qu'une fois. Points forts (5, un volcan et son « Parque Nacional Volcán … » comptent pour un),
   thèmes, nuits conseillées (visites des 6 premiers + 25 % de trajets, 1 à 4), lieux du voyage
-  déjà dans la région. « Ajouter ces lieux » ajoute les points forts manquants.
+  déjà dans la région, sites du patrimoine mondial cités. « Ajouter ces lieux » ajoute les points
+  forts manquants.
   **Accès** : les bases reliées par la route (Valhalla, voiture, une ligne de matrice par base,
   reprise paire par paire quand une paire fait échouer la requête) forment des groupes ; le plus
   grand est le réseau du pays, les autres sont `boat_or_plane` (île Cocos : « Expédition de

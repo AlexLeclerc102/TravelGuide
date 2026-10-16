@@ -6,6 +6,9 @@
 //! - **proximité** : trajet estimé depuis l'hébergement (ou les lieux) du jour le plus proche ;
 //!   au-delà de [`MAX_TRAVEL_S`], le lieu est écarté ;
 //! - **notoriété** : nombre de langues de son article Wikipédia (échelle logarithmique) ;
+//! - **intérêt pour le voyageur** : guide Wikivoyage, patrimoine mondial de l'UNESCO,
+//!   superficie d'un espace protégé, consultations de ses articles Wikipédia (popularité
+//!   actuelle, échelle logarithmique) ;
 //! - **goûts du groupe** : moyenne des notes du groupe pour sa catégorie ;
 //! - **envies** : le lieu répond aux envies déclarées (ou au budget, pour un hébergement),
 //!   d'autant plus que le groupe n'a pas encore d'avis sur ce genre de lieux ;
@@ -43,6 +46,19 @@ pub const SPREAD_MAX: f64 = 5.0;
 
 const W_PROXIMITY: f64 = 30.0;
 const W_NOTABILITY: f64 = 25.0;
+/// Les signaux d'intérêt : moins que la notoriété, à laquelle ils sont liés, mais assez pour
+/// départager deux lieux aussi connus l'un que l'autre.
+const W_POPULARITY: f64 = 8.0;
+const W_WIKIVOYAGE: f64 = 5.0;
+const W_WORLD_HERITAGE: f64 = 8.0;
+const W_AREA: f64 = 5.0;
+/// Consultations mensuelles donnant la popularité maximale.
+const POPULARITY_FULL: f64 = 20_000.0;
+/// À partir de ces consultations mensuelles, la popularité est citée comme raison.
+const POPULAR_VIEWS: u32 = 1_000;
+/// Superficie d'espace protégé donnant le bonus maximal, et à partir de laquelle elle est citée.
+const AREA_FULL_KM2: f64 = 1_000.0;
+const LARGE_AREA_KM2: f64 = 50.0;
 const W_TASTE: f64 = 15.0;
 const W_WANTED: f64 = 12.0;
 /// Force d'envie à partir de laquelle elle est citée comme raison.
@@ -69,6 +85,20 @@ pub struct Candidate {
     pub closed_all_days: bool,
     /// Répond aux envies du groupe (0 à 1 ; décroît à mesure que les avis arrivent).
     pub wanted: f64,
+    /// A un guide Wikivoyage.
+    pub wikivoyage: bool,
+    /// Patrimoine mondial de l'UNESCO.
+    pub world_heritage: bool,
+    /// Superficie d'un espace protégé (parc national, réserve…), en km² ; `None` pour les
+    /// autres lieux (la superficie d'une commune ne dit rien de son intérêt).
+    pub protected_area_km2: Option<f64>,
+    /// Consultations mensuelles de ses articles Wikipédia.
+    pub monthly_views: u32,
+}
+
+/// Popularité actuelle (0 à 1) d'après les consultations mensuelles, échelle logarithmique.
+pub fn popularity(monthly_views: u32) -> f64 {
+    ((1.0 + f64::from(monthly_views)).ln() / (1.0 + POPULARITY_FULL).ln()).min(1.0)
 }
 
 /// Un jour du voyage vu par les suggestions.
@@ -104,6 +134,14 @@ pub enum Reason {
     Near { day: usize, minutes: u32 },
     /// Article Wikipédia dans `languages` langues.
     Notable { languages: u32 },
+    /// Articles Wikipédia consultés `monthly_views` fois par mois.
+    Popular { monthly_views: u32 },
+    /// Guide Wikivoyage.
+    Wikivoyage,
+    /// Patrimoine mondial de l'UNESCO.
+    WorldHeritage,
+    /// Espace protégé de `km2` km².
+    LargeArea { km2: u32 },
     /// Le groupe note bien cette catégorie.
     Taste { average: f64 },
     /// Le jour `day` a encore `minutes` libres dans l'itinéraire.
@@ -178,6 +216,26 @@ fn score_one(index: usize, c: &Candidate, ctx: &Context) -> Option<Scored> {
             languages: c.languages,
         }),
     ));
+    parts.push((
+        W_POPULARITY * popularity(c.monthly_views),
+        (c.monthly_views >= POPULAR_VIEWS).then_some(Reason::Popular {
+            monthly_views: c.monthly_views,
+        }),
+    ));
+    if c.wikivoyage {
+        parts.push((W_WIKIVOYAGE, Some(Reason::Wikivoyage)));
+    }
+    if c.world_heritage {
+        parts.push((W_WORLD_HERITAGE, Some(Reason::WorldHeritage)));
+    }
+    if let Some(km2) = c.protected_area_km2.filter(|a| *a > 0.0) {
+        parts.push((
+            W_AREA * ((1.0 + km2).ln() / (1.0 + AREA_FULL_KM2).ln()).min(1.0),
+            (km2 >= LARGE_AREA_KM2).then_some(Reason::LargeArea {
+                km2: km2.round() as u32,
+            }),
+        ));
+    }
     if let Some(&average) = ctx.taste.get(&c.category) {
         parts.push((
             W_TASTE * (average - 3.0) / 2.0,
@@ -289,6 +347,10 @@ mod tests {
             completeness: 0.0,
             closed_all_days: false,
             wanted: 0.0,
+            wikivoyage: false,
+            world_heritage: false,
+            protected_area_km2: None,
+            monthly_views: 0,
         }
     }
 
@@ -440,6 +502,44 @@ mod tests {
         };
         assert_eq!(rank(0.0), 4);
         assert!(rank(1.0) < 4);
+    }
+
+    #[test]
+    fn signals_of_interest_break_ties_and_are_explained() {
+        // Deux parcs aussi connus : celui qui a un guide, le label UNESCO, une grande superficie
+        // et beaucoup de lecteurs passe devant, et chaque signal est cité.
+        let mut plain = cand(ARENAL, NATURE, "Parque A");
+        plain.languages = 20;
+        plain.protected_area_km2 = Some(20.0);
+        plain.monthly_views = 300;
+        let mut famous = cand(ARENAL, NATURE, "Parque B");
+        famous.languages = 20;
+        famous.wikivoyage = true;
+        famous.world_heritage = true;
+        famous.protected_area_km2 = Some(1_204.4);
+        famous.monthly_views = 6_000;
+        let out = recommend(&[plain, famous], &ctx(None), 2);
+        assert_eq!(out[0].index, 1, "{out:?}");
+        for r in [
+            Reason::Wikivoyage,
+            Reason::WorldHeritage,
+            Reason::LargeArea { km2: 1_204 },
+            Reason::Popular {
+                monthly_views: 6_000,
+            },
+        ] {
+            assert!(out[0].reasons.contains(&r), "{r:?} {out:?}");
+        }
+        // Petit parc, peu consulté : ces signaux comptent un peu, sans être cités.
+        assert!(!out[1]
+            .reasons
+            .iter()
+            .any(|r| matches!(r, Reason::LargeArea { .. } | Reason::Popular { .. })));
+        let bare = recommend(&[cand(ARENAL, NATURE, "Parque A")], &ctx(None), 1)[0].score;
+        assert!(out[1].score > bare);
+        // Un lieu très consulté, sans article dans beaucoup de langues, remonte quand même.
+        assert!(popularity(20_000) == 1.0 && popularity(0) == 0.0);
+        assert!(popularity(1_000) > 0.6);
     }
 
     #[test]

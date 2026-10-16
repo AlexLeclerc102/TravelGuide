@@ -13,6 +13,9 @@ function duration(minutes: number) {
   return `${Math.floor(minutes / 60)} h${rest ? ` ${String(rest).padStart(2, '0')}` : ''}`
 }
 
+/** Consultations arrondies à la centaine (« ≈ 5 200 ») : un ordre de grandeur. */
+const roundViews = (n: number) => (n >= 1000 ? Math.round(n / 100) * 100 : n)
+
 /** Point de départ d'un jour, pour l'afficher : son hébergement, sinon celui de la veille. */
 function startName(date: string | null, days: TripDay[], pois: Poi[]) {
   const i = days.findIndex((d) => d.date === date)
@@ -27,6 +30,14 @@ export function reasonText(r: SuggestionReason, days: TripDay[], pois: Poi[]) {
       return t.suggestions.near(r.minutes, startName(r.date, days, pois), r.date && short(r.date))
     case 'notable':
       return t.suggestions.notable(r.languages)
+    case 'popular':
+      return t.suggestions.popular(roundViews(r.monthly_views).toLocaleString('fr-FR'))
+    case 'wikivoyage':
+      return t.suggestions.wikivoyage
+    case 'world_heritage':
+      return t.suggestions.worldHeritage
+    case 'protected_area':
+      return t.suggestions.protectedArea(r.km2.toLocaleString('fr-FR'), r.national_park)
     case 'taste':
       return t.suggestions.taste(t.categories[r.category].toLowerCase(), formatRating(r.average))
     case 'free_time':

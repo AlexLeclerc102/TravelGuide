@@ -61,7 +61,17 @@ compléter un voyage déjà ébauché.
      sont parfois maigres (deux étapes voisines) ; la journée de route n'est pas déduite des
      nuits d'une étape.
 
-5. **Meilleurs signaux d'intérêt** : guide Wikivoyage, patrimoine (UNESCO, Wikidata P1435),
-   superficie des parcs nationaux, consultations Wikipédia ; affichés comme raisons.
+5. **Meilleurs signaux d'intérêt** — *fait*
+   - Rafraîchis avec la notoriété (`wikidata_notability`, même requête Wikidata) : guide
+     Wikivoyage, patrimoine mondial de l'UNESCO (P757 ou P1435 = Q9259), superficie (P2046) ;
+     consultations mensuelles des articles fr, en, es sur 12 mois (API pageviews).
+   - Suggestions : chacun compte dans le score et donne sa raison (« Patrimoine mondial de
+     l'UNESCO », « Parc national de 1 204 km² », « Très consulté : ≈ 5 200 lectures Wikipédia
+     par mois », « Décrit dans un guide Wikivoyage ») ; la superficie ne vaut que pour les
+     espaces protégés (celle d'une commune ne dit rien).
+   - Régions : poids des lieux majoré (guide, patrimoine mondial, popularité), sites UNESCO cités
+     sur la fiche ; une localité qui a un guide Wikivoyage est préférée comme base.
+   - Reporté : les autres désignations P1435 (sites Ramsar, patrimoine national), trop
+     hétérogènes pour une raison lisible.
 
 6. **Carte d'exploration** : régions colorées par thème avant toute planification.

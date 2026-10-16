@@ -7,6 +7,10 @@ import { tripKeys, type Budget, type Interest } from './trips'
 export type SuggestionReason =
   | { kind: 'near'; date: string | null; minutes: number }
   | { kind: 'notable'; languages: number }
+  | { kind: 'popular'; monthly_views: number }
+  | { kind: 'wikivoyage' }
+  | { kind: 'world_heritage' }
+  | { kind: 'protected_area'; km2: number; national_park: boolean }
   | { kind: 'taste'; category: Category; average: number }
   | { kind: 'free_time'; date: string; minutes: number }
   | { kind: 'interest'; interest: Interest }
@@ -49,6 +53,10 @@ export interface Region {
   highlights: Place[]
   /** Lieux du voyage déjà dans la région. */
   in_trip: number
+  /** Lieux de la région inscrits au patrimoine mondial de l'UNESCO. */
+  world_heritage: string[]
+  /** La localité où loger a un guide Wikivoyage. */
+  wikivoyage: boolean
 }
 
 export interface Regions {

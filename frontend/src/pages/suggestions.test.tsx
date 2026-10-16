@@ -83,6 +83,10 @@ const arenal: Suggestion = {
   travel_min: 15,
   reasons: [
     { kind: 'notable', languages: 41 },
+    { kind: 'world_heritage' },
+    { kind: 'protected_area', km2: 1204, national_park: true },
+    { kind: 'popular', monthly_views: 5249 },
+    { kind: 'wikivoyage' },
     { kind: 'near', date: '2026-12-02', minutes: 15 },
     { kind: 'taste', category: 'nature', average: 4.5 },
     { kind: 'free_time', date: '2026-12-02', minutes: 150 },
@@ -129,6 +133,10 @@ describe('suggestions', () => {
     await openSuggestions()
     const card = (await screen.findByText('Volcán Arenal')).closest('li')!
     expect(within(card).getByText('Article Wikipédia en 41 langues')).toBeInTheDocument()
+    expect(within(card).getByText('Patrimoine mondial de l’UNESCO')).toBeInTheDocument()
+    expect(within(card).getByText(/^Parc national de 1\s204 km²$/)).toBeInTheDocument()
+    expect(within(card).getByText(/^Très consulté : ≈ 5\s200 lectures Wikipédia par mois$/)).toBeInTheDocument()
+    expect(within(card).getByText('Décrit dans un guide Wikivoyage')).toBeInTheDocument()
     expect(within(card).getByText('≈ 15 min de La Fortuna (mer. 2 déc.)')).toBeInTheDocument()
     expect(within(card).getByText('Le groupe aime : nature (4,5 ★)')).toBeInTheDocument()
     expect(within(card).getByText('2 h 30 libres le mer. 2 déc.')).toBeInTheDocument()
@@ -202,6 +210,8 @@ describe('suggestions', () => {
             place(2, 'Catarata Río Fortuna', { osm_tag: 'waterway=waterfall' }),
           ],
           in_trip: 1,
+          world_heritage: [],
+          wikivoyage: true,
         },
         {
           name: 'Base Wafer',
@@ -214,6 +224,8 @@ describe('suggestions', () => {
           place_count: 1,
           highlights: [place(9, 'Isla del Coco')],
           in_trip: 0,
+          world_heritage: ['Isla del Coco'],
+          wikivoyage: false,
         },
       ],
     }
@@ -238,11 +250,15 @@ describe('suggestions', () => {
     expect(within(card).getByText('et 2 autres lieux notables')).toBeInTheDocument()
     expect(within(card).getByRole('link', { name: 'Volcán Arenal' })).toHaveAttribute('href', 'https://en.wikipedia.org/wiki/Arenal_Volcano')
 
+    expect(within(card).getByText('Guide Wikivoyage')).toBeInTheDocument()
+    expect(within(card).queryByText(/UNESCO/)).not.toBeInTheDocument()
     expect(within(card).queryByText(/bateau/)).not.toBeInTheDocument()
     // Une île sans route : dit clairement, sans nuits conseillées trompeuses.
     const island = screen.getByText('Base Wafer', { selector: 'strong' }).closest('li')!
     expect(within(island).getByText(/Accessible uniquement en bateau ou en avion/)).toBeInTheDocument()
     expect(within(island).getByText(/Expédition de plusieurs jours/)).toBeInTheDocument()
+    expect(within(island).getByText('🏛 Patrimoine mondial de l’UNESCO : Isla del Coco')).toBeInTheDocument()
+    expect(within(island).queryByText('Guide Wikivoyage')).not.toBeInTheDocument()
     expect(within(island).queryByText(/nuit conseillée/)).not.toBeInTheDocument()
 
     fireEvent.click(within(card).getByRole('button', { name: 'Ajouter les points forts de La Fortuna' }))
