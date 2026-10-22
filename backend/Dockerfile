@@ -10,7 +10,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 app
+    && useradd --system --uid 10001 app \
+    # Photos des lieux : un volume monté ici hérite de ce propriétaire à sa création.
+    && mkdir -p /data/photos && chown app /data/photos
 COPY --from=build /usr/local/bin/api /usr/local/bin/api
 USER app
 EXPOSE 8080

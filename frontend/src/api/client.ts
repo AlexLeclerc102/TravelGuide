@@ -24,7 +24,8 @@ export const CLIENT_ID: string =
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('X-Client-Id', CLIENT_ID)
-  if (init.body !== undefined && !headers.has('Content-Type')) {
+  // FormData : le navigateur pose lui-même le type multipart et sa délimitation.
+  if (init.body !== undefined && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
   const res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: 'include' })

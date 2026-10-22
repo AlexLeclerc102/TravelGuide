@@ -1,7 +1,7 @@
 import { QueryClient } from '@tanstack/react-query'
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { contentKeys, type PoiLink, type PoiNote } from '../api/poiContent'
+import { contentKeys, type PoiLink, type PoiNote, type PoiPhoto } from '../api/poiContent'
 import type { Poi } from '../api/pois'
 import { suggestionKeys } from '../api/suggestions'
 import { invalidateTopics } from '../realtime/useTripRealtime'
@@ -235,6 +235,121 @@ describe('liens des lieux', () => {
 
     fireEvent.click(within(section).getByRole('button', { name: 'Supprimer le lien Billets officiels' }))
     await waitFor(() => expect(within(section).queryByRole('link', { name: 'Billets officiels' })).not.toBeInTheDocument())
+  })
+})
+
+const photo = (id: string, extra: Partial<PoiPhoto> = {}): PoiPhoto => ({
+  id,
+  poi_id: 'p1',
+  width: 1600,
+  height: 800,
+  image_url: `/api/v1/trips/trip-1/pois/p1/photos/${id}/image`,
+  thumb_url: `/api/v1/trips/trip-1/pois/p1/photos/${id}/thumb`,
+  source_url: null,
+  source_page: null,
+  author_credit: null,
+  license: null,
+  author_id: 'u2',
+  author_name: 'Lucía',
+  via_assistant: false,
+  created_at: '2026-10-20T10:00:00Z',
+  ...extra,
+})
+
+const emptyContent: Routes = {
+  'GET /trips/trip-1/pois/p1/notes': () => ({ status: 200, body: [] }),
+  'GET /trips/trip-1/pois/p1/links': () => ({ status: 200, body: [] }),
+}
+
+describe('photos des lieux', () => {
+  it('montre les photos avec leur crédit, sans action pour un lecteur', async () => {
+    mockApi(
+      routes('viewer', {
+        ...emptyContent,
+        'GET /trips/trip-1/pois/p1/photos': () => ({
+          status: 200,
+          body: [
+            photo('ph1', {
+              author_credit: 'Ana',
+              license: 'CC BY-SA 4.0',
+              source_page: 'https://commons.wikimedia.org/wiki/File:Arenal.jpg',
+              via_assistant: true,
+            }),
+          ],
+        }),
+      }),
+    )
+    await openArenal()
+    const section = await screen.findByRole('region', { name: 'Photos' })
+    const img = await within(section).findByRole('img', { name: 'Photo 1 de Volcán Arenal' })
+    expect(img).toHaveAttribute('src', '/api/v1/trips/trip-1/pois/p1/photos/ph1/thumb')
+    expect(img.closest('a')).toHaveAttribute('href', '/api/v1/trips/trip-1/pois/p1/photos/ph1/image')
+    expect(within(section).getByText('© Ana')).toBeInTheDocument()
+    expect(within(section).getByText('CC BY-SA 4.0')).toBeInTheDocument()
+    expect(within(section).getByRole('link', { name: 'Source : commons.wikimedia.org' })).toBeInTheDocument()
+    expect(within(section).getByText('assistant')).toBeInTheDocument()
+    expect(within(section).queryByRole('button', { name: /Supprimer/ })).not.toBeInTheDocument()
+    expect(within(section).queryByText('Ajouter une photo')).not.toBeInTheDocument()
+  })
+
+  it('un éditeur envoie un fichier (multipart) puis importe une image par son adresse', async () => {
+    const calls: { body: unknown; contentType: string | null }[] = []
+    mockApi(
+      routes('editor', {
+        ...emptyContent,
+        'GET /trips/trip-1/pois/p1/photos': () => ({ status: 200, body: [] }),
+        'POST /trips/trip-1/pois/p1/photos': (init) => {
+          calls.push({ body: init?.body, contentType: new Headers(init?.headers).get('Content-Type') })
+          return { status: 201, body: photo('ph1', { author_credit: 'Ana' }) }
+        },
+        'POST /trips/trip-1/pois/p1/photos/import': (init) => {
+          calls.push({ body: JSON.parse(String(init?.body)), contentType: new Headers(init?.headers).get('Content-Type') })
+          return { status: 201, body: photo('ph2', { source_url: 'https://upload.wikimedia.org/a.jpg' }) }
+        },
+      }),
+    )
+    await openArenal()
+    const section = await screen.findByRole('region', { name: 'Photos' })
+    fireEvent.click(within(section).getByText('Ajouter une photo'))
+    let form = within(section).getByRole('form', { name: 'Ajouter une photo' })
+    const file = new File([new Uint8Array([0xff, 0xd8, 0xff])], 'arenal.jpg', { type: 'image/jpeg' })
+    fireEvent.change(within(form).getByLabelText(/Fichier/), { target: { files: [file] } })
+    fireEvent.change(within(form).getByLabelText('Crédit (auteur, facultatif)'), { target: { value: 'Ana' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Ajouter la photo' }))
+
+    expect(await within(section).findByRole('img', { name: 'Photo 1 de Volcán Arenal' })).toBeInTheDocument()
+    const sent = calls[0].body as FormData
+    expect(sent).toBeInstanceOf(FormData)
+    expect((sent.get('file') as File).name).toBe('arenal.jpg')
+    expect(sent.get('author_credit')).toBe('Ana')
+    expect(sent.get('license')).toBeNull() // champs vides non envoyés
+    // Le navigateur pose le type multipart lui-même (avec la délimitation).
+    expect(calls[0].contentType).toBeNull()
+
+    form = within(section).getByRole('form', { name: 'Ajouter une photo' })
+    fireEvent.change(within(form).getByLabelText('ou adresse https d’une image'), {
+      target: { value: 'https://upload.wikimedia.org/a.jpg' },
+    })
+    fireEvent.click(within(form).getByRole('button', { name: 'Ajouter la photo' }))
+    expect(await within(section).findByRole('img', { name: 'Photo 2 de Volcán Arenal' })).toBeInTheDocument()
+    expect(calls[1].body).toMatchObject({ image_url: 'https://upload.wikimedia.org/a.jpg' })
+    expect(calls[1].contentType).toBe('application/json')
+  })
+
+  it('un éditeur retire une photo après confirmation', async () => {
+    mockApi(
+      routes('editor', {
+        ...emptyContent,
+        'GET /trips/trip-1/pois/p1/photos': () => ({ status: 200, body: [photo('ph1')] }),
+        'DELETE /trips/trip-1/pois/p1/photos/ph1': () => ({ status: 204, body: undefined }),
+      }),
+    )
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await openArenal()
+    const section = await screen.findByRole('region', { name: 'Photos' })
+    fireEvent.click(await within(section).findByRole('button', { name: 'Supprimer la photo 1' }))
+    expect(confirm).toHaveBeenCalledWith('Supprimer cette photo ?')
+    await waitFor(() => expect(within(section).queryByRole('img')).not.toBeInTheDocument())
   })
 })
 

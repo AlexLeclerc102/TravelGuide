@@ -4,6 +4,7 @@ use sqlx::PgPool;
 
 use crate::config::Config;
 use crate::mail::Mailer;
+use crate::photos::PhotoService;
 use crate::places::PlaceService;
 use crate::rate_limit::RateLimiter;
 use crate::realtime::Hub;
@@ -23,4 +24,6 @@ pub struct AppState {
     pub wiki: Arc<WikiService>,
     /// Canaux temps réel des voyages ouverts.
     pub realtime: Arc<Hub>,
+    /// Photos des lieux (stockage, téléchargement des images importées).
+    pub photos: Arc<PhotoService>,
 }

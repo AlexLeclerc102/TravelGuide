@@ -14,6 +14,7 @@ pub mod mail;
 pub mod notability;
 pub mod opening;
 pub mod osm_import;
+pub mod photos;
 pub mod places;
 pub mod pois;
 pub mod preferences;
@@ -22,6 +23,7 @@ pub mod realtime;
 pub mod regions;
 pub mod routes;
 pub mod routing;
+pub mod safe_fetch;
 pub mod state;
 pub mod suggest;
 pub mod travel;
@@ -43,6 +45,7 @@ use utoipa_scalar::{Scalar, Servable};
 
 use crate::config::Config;
 use crate::mail::Mailer;
+use crate::photos::PhotoService;
 use crate::places::PlaceService;
 use crate::rate_limit::RateLimiter;
 use crate::routing::RoutingService;
@@ -69,6 +72,7 @@ pub fn build_app(
     places: Arc<PlaceService>,
     routing: Arc<RoutingService>,
     wiki: Arc<WikiService>,
+    photos: Arc<PhotoService>,
 ) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(HeaderValue::from_str(&config.public_origin).expect("PUBLIC_ORIGIN invalide"))
@@ -94,6 +98,7 @@ pub fn build_app(
         routing,
         wiki,
         realtime: Arc::new(realtime::Hub::default()),
+        photos,
     };
 
     let (api, openapi) = OpenApiRouter::with_openapi(ApiDoc::openapi())

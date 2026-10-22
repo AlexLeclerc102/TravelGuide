@@ -23,6 +23,21 @@ pub struct AccountExport {
     pub poi_notes: Vec<PoiNoteExport>,
     /// Liens ajoutés aux lieux (ils restent, sans auteur, après suppression du compte).
     pub poi_links: Vec<PoiLinkExport>,
+    /// Photos ajoutées aux lieux (elles restent, sans auteur, après suppression du compte).
+    pub poi_photos: Vec<PoiPhotoExport>,
+}
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct PoiPhotoExport {
+    pub trip_id: Uuid,
+    pub poi_id: Uuid,
+    pub poi_name: String,
+    pub photo_id: Uuid,
+    pub source_url: Option<String>,
+    pub author_credit: Option<String>,
+    pub via_assistant: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -138,6 +153,15 @@ pub async fn export(db: &PgPool, user: User) -> sqlx::Result<AccountExport> {
     .bind(user.id)
     .fetch_all(db)
     .await?;
+    let poi_photos = sqlx::query_as(
+        "SELECT p.trip_id, ph.poi_id, p.name AS poi_name, ph.id AS photo_id, ph.source_url,
+                ph.author_credit, ph.via_assistant, ph.created_at
+         FROM poi_photos ph JOIN pois p ON p.id = ph.poi_id
+         WHERE ph.author_id = $1 ORDER BY ph.created_at",
+    )
+    .bind(user.id)
+    .fetch_all(db)
+    .await?;
     Ok(AccountExport {
         exported_at: OffsetDateTime::now_utc(),
         user,
@@ -147,6 +171,7 @@ pub async fn export(db: &PgPool, user: User) -> sqlx::Result<AccountExport> {
         reviews,
         poi_notes,
         poi_links,
+        poi_photos,
     })
 }
 

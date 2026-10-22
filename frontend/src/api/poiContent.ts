@@ -52,6 +52,7 @@ export const contentKeys = {
   all: (tripId: string) => [...tripKeys.one(tripId), 'poi-content'] as const,
   notes: (tripId: string, poiId: string) => [...contentKeys.all(tripId), poiId, 'notes'] as const,
   links: (tripId: string, poiId: string) => [...contentKeys.all(tripId), poiId, 'links'] as const,
+  photos: (tripId: string, poiId: string) => [...contentKeys.all(tripId), poiId, 'photos'] as const,
 }
 
 const base = (tripId: string, poiId: string) => `/trips/${tripId}/pois/${poiId}`
@@ -109,6 +110,73 @@ export function useDeleteLink(tripId: string, poiId: string) {
     mutationFn: (id: string) => apiFetch<void>(`${base(tripId, poiId)}/links/${id}`, { method: 'DELETE' }),
     onSuccess: (_, id) =>
       qc.setQueryData<PoiLink[]>(contentKeys.links(tripId, poiId), (list) => list?.filter((l) => l.id !== id)),
+  })
+}
+
+/** Photo d'un lieu ; image et vignette sont servies aux seuls membres du voyage. */
+export interface PoiPhoto {
+  id: string
+  poi_id: string
+  width: number
+  height: number
+  image_url: string
+  thumb_url: string
+  /** Image d'origine, si importée depuis le web. */
+  source_url: string | null
+  /** Page qui présente l'image. */
+  source_page: string | null
+  author_credit: string | null
+  license: string | null
+  author_id: string | null
+  author_name: string | null
+  via_assistant: boolean
+  created_at: string
+}
+
+export interface PhotoCredit {
+  author_credit?: string
+  license?: string
+  source_page?: string
+}
+
+/** Photo à ajouter : fichier envoyé, ou image importée depuis une adresse https. */
+export type NewPhoto = ({ file: File } | { image_url: string }) & PhotoCredit
+
+export const usePhotos = (tripId: string, poiId: string) =>
+  useQuery({
+    queryKey: contentKeys.photos(tripId, poiId),
+    queryFn: () => apiFetch<PoiPhoto[]>(`${base(tripId, poiId)}/photos`),
+  })
+
+export function useAddPhoto(tripId: string, poiId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (photo: NewPhoto) => {
+      const { author_credit, license, source_page } = photo
+      if ('file' in photo) {
+        const form = new FormData()
+        form.append('file', photo.file)
+        for (const [key, value] of Object.entries({ author_credit, license, source_page })) {
+          if (value?.trim()) form.append(key, value)
+        }
+        return apiFetch<PoiPhoto>(`${base(tripId, poiId)}/photos`, { method: 'POST', body: form })
+      }
+      return apiFetch<PoiPhoto>(
+        `${base(tripId, poiId)}/photos/import`,
+        json('POST', { image_url: photo.image_url, author_credit, license, source_page }),
+      )
+    },
+    onSuccess: (photo) =>
+      qc.setQueryData<PoiPhoto[]>(contentKeys.photos(tripId, poiId), (list) => [...(list ?? []), photo]),
+  })
+}
+
+export function useDeletePhoto(tripId: string, poiId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiFetch<void>(`${base(tripId, poiId)}/photos/${id}`, { method: 'DELETE' }),
+    onSuccess: (_, id) =>
+      qc.setQueryData<PoiPhoto[]>(contentKeys.photos(tripId, poiId), (list) => list?.filter((p) => p.id !== id)),
   })
 }
 

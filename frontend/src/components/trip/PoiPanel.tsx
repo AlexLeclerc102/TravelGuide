@@ -17,7 +17,7 @@ import { Icon } from '../Icon'
 import { pointAt, useMapHover } from '../mapHover'
 import { formatDate, formatRating } from '../../lib/format'
 import { PoiDetails, PoiEditor } from './PoiEditor'
-import { LinksSection, NotesSection } from './PoiContent'
+import { LinksSection, NotesSection, PhotosSection } from './PoiContent'
 import { PoiLinks } from './PoiLinks'
 import { ReviewsSection } from './ReviewsSection'
 import { WikiCard } from './WikiCard'
@@ -103,6 +103,13 @@ export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeCh
             </button>
           </div>
           <WikiCard tripId={trip.id} poi={selectedPoi} />
+          <PhotosSection
+            key={`photos:${selectedPoi.id}`}
+            tripId={trip.id}
+            poiId={selectedPoi.id}
+            poiName={selectedPoi.name}
+            canEdit={canEdit}
+          />
           <PoiLinks poi={selectedPoi} />
           <NotesSection key={`notes:${selectedPoi.id}`} tripId={trip.id} poiId={selectedPoi.id} canEdit={canEdit} />
           {/* Noter est plus fréquent que modifier : les avis d'abord, la modification repliée. */}

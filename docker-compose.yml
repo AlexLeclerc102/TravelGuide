@@ -39,8 +39,11 @@ services:
     build: ./backend
     env_file: .env
     ports: ["8080:8080"]
-    # Extrait OSM téléchargé par Valhalla : lieux des suggestions (importés au démarrage).
-    volumes: [valhalla-data:/osm:ro]
+    environment:
+      PHOTOS_DIR: /data/photos
+    # Extrait OSM téléchargé par Valhalla : lieux des suggestions (importés au démarrage) ;
+    # photos des lieux.
+    volumes: [valhalla-data:/osm:ro, photos-data:/data/photos]
     depends_on:
       db: { condition: service_healthy }
 
@@ -74,6 +77,7 @@ services:
       - e2e-node-modules:/e2e/node_modules
 
 volumes:
+  photos-data:
   e2e-node-modules:
   db-data:
   valhalla-data:

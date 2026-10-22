@@ -28,6 +28,8 @@ pub struct Config {
     pub valhalla_url: Option<String>,
     /// Extrait OpenStreetMap (`.osm.pbf`) dont les lieux nourrissent les suggestions.
     pub osm_extract: Option<PathBuf>,
+    /// Dossier des photos des lieux.
+    pub photos_dir: PathBuf,
     /// Assistant IA (OpenRouter). Absent sans `OPENROUTER_API_KEY` : assistant désactivé.
     pub ai: Option<AiConfig>,
 }
@@ -142,6 +144,7 @@ impl Config {
                 .ok()
                 .filter(|s| !s.trim().is_empty())
                 .map(PathBuf::from),
+            photos_dir: PathBuf::from(optional("PHOTOS_DIR", "data/photos")),
             ai: AiConfig::from_env()?,
         })
     }
@@ -161,6 +164,7 @@ impl Config {
             nominatim_contact: None,
             valhalla_url: None,
             osm_extract: None,
+            photos_dir: PathBuf::from("data/photos"),
             ai: None,
         }
     }

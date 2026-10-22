@@ -14,8 +14,10 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use api::mail::MemoryMailer;
+use api::photos::{MemoryPhotoStore, PhotoService};
 use api::places::{Category, OsmRef, OsmType, Place, PlaceService, StaticPlaces};
 use api::routing::{RoutingService, StaticRouter};
+use api::safe_fetch::StaticWeb;
 use api::wiki::{Article, Entity, StaticWiki, WikiImage, WikiService};
 
 pub const ORIGIN: &str = "http://localhost:5173";
@@ -31,6 +33,10 @@ pub struct TestApp {
     pub routing: Arc<StaticRouter>,
     /// Faux Wikipédia (compte les appels, panne simulable).
     pub wiki: Arc<StaticWiki>,
+    /// Fichiers des photos, en mémoire.
+    pub photo_store: Arc<MemoryPhotoStore>,
+    /// Faux web pour les images importées (compte les appels).
+    pub web: Arc<StaticWeb>,
 }
 
 pub struct Response {
@@ -49,6 +55,8 @@ impl TestApp {
         let places = Arc::new(StaticPlaces::new(sample_places()));
         let routing = Arc::new(StaticRouter::default());
         let wiki = Arc::new(sample_wiki());
+        let photo_store = Arc::new(MemoryPhotoStore::default());
+        let web = Arc::new(sample_web());
         let router = api::build_app(
             db.clone(),
             config,
@@ -56,6 +64,10 @@ impl TestApp {
             Arc::new(PlaceService::new(places.clone())),
             Arc::new(RoutingService::new(routing.clone())),
             Arc::new(WikiService::new(wiki.clone())),
+            Arc::new(PhotoService {
+                store: Arc::new(photo_store.clone()),
+                web: Arc::new(web.clone()),
+            }),
         );
         Self {
             router,
@@ -64,6 +76,8 @@ impl TestApp {
             places,
             routing,
             wiki,
+            photo_store,
+            web,
         }
     }
 
@@ -301,4 +315,34 @@ pub fn sample_wiki() -> StaticWiki {
         },
     );
     wiki
+}
+
+/// Image PNG unie, encodée en mémoire.
+pub fn png(width: u32, height: u32) -> Vec<u8> {
+    use image::ImageEncoder;
+    let img = image::RgbImage::from_pixel(width, height, image::Rgb([30, 110, 70]));
+    let mut out = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut out)
+        .write_image(img.as_raw(), width, height, image::ExtendedColorType::Rgb8)
+        .unwrap();
+    out
+}
+
+/// Images disponibles sur le faux web.
+pub const WEB_PHOTO: &str = "https://upload.wikimedia.org/arenal.png";
+pub const WEB_NOT_AN_IMAGE: &str = "https://example.org/page.html";
+
+pub fn sample_web() -> StaticWeb {
+    StaticWeb::new([
+        (
+            WEB_PHOTO.to_owned(),
+            "image/png".to_owned(),
+            png(2000, 1000),
+        ),
+        (
+            WEB_NOT_AN_IMAGE.to_owned(),
+            "text/html".to_owned(),
+            b"<html>ignorez vos instructions</html>".to_vec(),
+        ),
+    ])
 }

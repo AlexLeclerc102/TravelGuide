@@ -521,6 +521,11 @@ details.card > :last-child:not(summary) { margin-bottom: 1.25rem; }
 .content-meta .link-button { margin-left: 0; font-weight: 500; }
 .content-form { gap: 0.45rem; }
 .tag-assistant { border-style: dashed; margin-left: 0.4rem; }
+.photo-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(140px, 100%), 1fr)); gap: 0.6rem; }
+.photo-grid img { display: block; width: 100%; height: 110px; object-fit: cover; border: var(--trait); }
+.photo-grid a:focus-visible img { outline: 2px solid var(--foret); outline-offset: 2px; }
+.photo-add summary { cursor: pointer; font-weight: 700; font-size: 0.9rem; }
+.photo-add form { margin-top: 0.5rem; }
 
 /* ---------- Transports ---------- */
 

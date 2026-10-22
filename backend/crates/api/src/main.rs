@@ -3,10 +3,12 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use api::mail::{LogMailer, Mailer, SmtpMailer};
+use api::photos::{LocalPhotoStore, PhotoService};
 use api::places::nominatim::Nominatim;
 use api::places::PlaceService;
 use api::routing::valhalla::Valhalla;
 use api::routing::RoutingService;
+use api::safe_fetch::SafeFetcher;
 use api::wiki::{WikiService, Wikimedia};
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
@@ -78,8 +80,27 @@ async fn main() -> anyhow::Result<()> {
         None => tracing::warn!("OSM_EXTRACT absent : pas de suggestions de lieux"),
     }
 
+    let photos = Arc::new(PhotoService::new(
+        LocalPhotoStore::new(&config.photos_dir)?,
+        SafeFetcher::new(&config.user_agent()),
+    ));
+    // Fichiers des photos supprimées en cascade (lieu, voyage, compte) : nettoyés chaque heure.
+    {
+        let (db, photos) = (db.clone(), photos.clone());
+        tokio::spawn(async move {
+            loop {
+                match api::photos::sweep_orphans(&db, photos.store.as_ref()).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(count = n, "fichiers de photos orphelins supprimés"),
+                    Err(e) => tracing::warn!(error = ?e, "nettoyage des photos en échec"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
+        });
+    }
+
     let addr = config.bind_addr;
-    let app = api::build_app(db, config, mailer, places, routing, wiki);
+    let app = api::build_app(db, config, mailer, places, routing, wiki, photos);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "API démarrée");
     axum::serve(

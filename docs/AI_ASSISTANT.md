@@ -204,10 +204,16 @@ author (same rule as places).
    made **to the checked IP** (`reqwest::ClientBuilder::resolve`) so a second DNS answer cannot
    rebind it. Redirects are followed manually (at most 3), each hop re-checked the same way.
    10 MB limit and 10 s timeout.
-2. The `image` crate decodes it (type sniffed, not trusted from headers), strips EXIF (GPS),
-   re-encodes to WebP/JPEG at 1600 px plus a 400 px thumbnail.
+2. The `image` crate decodes it (type sniffed, not trusted from headers, with dimension and
+   memory limits), applies the EXIF orientation, then re-encodes from pixels only (so no EXIF or
+   GPS survives) to JPEG at 1600 px plus a 400 px thumbnail. JPEG rather than WebP: the `image`
+   crate only writes lossless WebP, which is far larger.
 3. Storage sits behind a `PhotoStore` trait, with a local volume (`/data/photos`) in dev and an
    S3-compatible store later. Photos are served through an authenticated route (members only).
+   Rows deleted in cascade (place, trip, account) leave files behind; an hourly sweep removes
+   files with no row once they are older than 15 minutes.
+5. Routes: `POST …/photos` (multipart upload) and `POST …/photos/import` (`image_url` plus
+   credit), which is what the assistant's `add_photo` tool dispatches to.
 4. **Copyright**: the assistant should prefer Wikimedia Commons (licence and author already
    handled by `wiki.rs`) and the place's official site. Otherwise it stores a link rather than a
    copy. The source and credit are always shown.
