@@ -7,9 +7,9 @@ sessions, GDPR export/deletion), **invitations**, **members** (roles, removal, o
 and trip deletion.
 
 Provider: **OpenRouter** (OpenAI-compatible `chat/completions` API, one key). The first model is
-**GLM** (`z-ai/glm-5.2`, pinned to a dated snapshot such as `z-ai/glm-5.2-20260616` for
-reproducibility). The model is a config value, so other models can be compared without code
-changes.
+**GLM 5.3 flash** (`z-ai/glm-5.3-flash`), chosen for cost and speed; a larger model replaces it
+if tasks need more reasoning. The model is a config value, so other models can be compared
+without code changes, and the dated version that answered is stored on each message.
 
 ---
 
@@ -94,7 +94,7 @@ pub trait LlmProvider: Send + Sync {
 
 ```
 OPENROUTER_API_KEY=            # absent → assistant disabled (feature hidden in the UI)
-AI_MODEL=z-ai/glm-5.2          # main agent model
+AI_MODEL=z-ai/glm-5.3-flash    # main agent model
 AI_MODEL_SMALL=                # summaries, page extraction, search condensing (defaults to AI_MODEL)
 AI_MODELS_ALLOWED=             # comma list selectable per conversation (dev / comparison)
 AI_DAILY_BUDGET_USD=0.50       # per user
@@ -373,14 +373,12 @@ Target: **< 6k input tokens** for a typical turn on a 50-place trip, more than h
 | A4 | `web_search`, `fetch_page`, enrichment flows (`add_note/link/photo` with sources) | Finds new places and enriches existing ones with cited sources |
 | A5 | Token work: history compaction, tool groups, result shrinking, caching metrics; model comparison runs | Typical turn < 6k tokens, cache hit > 50 %; GLM vs 2–3 others compared on the eval suite |
 
-A0 findings (OpenRouter public model list, 2026-10-22):
-- `z-ai/glm-5.2` exists with tool calling; its canonical dated slug is `z-ai/glm-5.2-20260616`
-  (whether requests accept the dated slug is checked on the first live eval run). The response's
-  `model` field reports the dated version, and it is stored on each message.
-- Newer in the family: `z-ai/glm-5.3` (cheaper input) and `z-ai/glm-5.3-flash` (very cheap,
-  a natural `AI_MODEL_SMALL` candidate). Both go into the first comparison run.
-- GLM 5.2 is served by about 35 hosts, among them `mistral/eu` (EU) and `z-ai` (the model's
-  maker). Choosing the hosts for `AI_PROVIDERS_ONLY` is a legal decision (DPA), not a technical
+A0 findings (OpenRouter, 2026-10-22):
+- Main model: `z-ai/glm-5.3-flash` (dated `z-ai/glm-5.3-flash-20260826`), with tool calling. First
+  live eval: correct `add_poi` call in 0.7 s for 229 input / 22 output tokens, $0.000036.
+- If more reasoning is needed, the next step up in the family is `z-ai/glm-5.3`.
+- GLM 5.3 flash is served by about 35 hosts, none tagged as EU-hosted on the endpoint list
+  (GLM 5.2, by contrast, is offered by `mistral/eu`). This matters for GDPR transfers. Choosing the hosts for `AI_PROVIDERS_ONLY` is a legal decision (DPA), not a technical
   one; until it is made, requests only exclude hosts that collect data.
 
 Open questions:

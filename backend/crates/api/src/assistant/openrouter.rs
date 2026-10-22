@@ -405,7 +405,7 @@ mod tests {
     #[test]
     fn builds_request_body() {
         let req = ChatRequest {
-            model: "z-ai/glm-5.2".into(),
+            model: "z-ai/glm-5.3-flash".into(),
             messages: vec![
                 Message::system("Tu es un assistant."),
                 Message::user("Ajoute Arenal"),
@@ -484,7 +484,7 @@ mod tests {
     fn assembles_text_tool_calls_and_usage() {
         let mut decoder = Decoder::default();
         let out = events(&mut decoder, &[
-            "data: {\"model\":\"z-ai/glm-5.2-20260616\",\"choices\":[{\"delta\":{\"content\":\"Je \"}}]}\n\n",
+            "data: {\"model\":\"z-ai/glm-5.3-flash-20260826\",\"choices\":[{\"delta\":{\"content\":\"Je \"}}]}\n\n",
             "data: {\"choices\":[{\"delta\":{\"content\":\"cherche.\"}}]}\n\n",
             // Deux appels parallèles, arguments découpés et entrelacés.
             "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"a\",\"function\":{\"name\":\"add_poi\",\"arguments\":\"{\\\"na\"}}]}}]}\n\n",
@@ -519,7 +519,7 @@ mod tests {
                         cached_tokens: 900,
                         cost_usd: 0.00042,
                     },
-                    model: "z-ai/glm-5.2-20260616".into(),
+                    model: "z-ai/glm-5.3-flash-20260826".into(),
                 },
             ]
         );

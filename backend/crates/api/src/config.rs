@@ -80,7 +80,7 @@ impl AiConfig {
         else {
             return Ok(None);
         };
-        let model = optional("AI_MODEL", "z-ai/glm-5.2");
+        let model = optional("AI_MODEL", "z-ai/glm-5.3-flash");
         let model_small = std::env::var("AI_MODEL_SMALL")
             .ok()
             .filter(|s| !s.trim().is_empty())

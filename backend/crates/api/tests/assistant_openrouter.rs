@@ -65,8 +65,8 @@ async fn serve(status: StatusCode, body: &'static str) -> (OpenRouter, Seen) {
     let ai = AiConfig {
         api_key: Secret::new("sk-or-test"),
         base_url: format!("http://{addr}/api/v1/"),
-        model: "z-ai/glm-5.2".into(),
-        model_small: "z-ai/glm-5.2".into(),
+        model: "z-ai/glm-5.3-flash".into(),
+        model_small: "z-ai/glm-5.3-flash".into(),
         models_allowed: vec![],
         providers_only: vec!["mistral/eu".into()],
         daily_budget_usd: 0.5,
@@ -77,7 +77,7 @@ async fn serve(status: StatusCode, body: &'static str) -> (OpenRouter, Seen) {
 
 fn request() -> ChatRequest {
     ChatRequest {
-        model: "z-ai/glm-5.2".into(),
+        model: "z-ai/glm-5.3-flash".into(),
         messages: vec![Message::user("Où dormir près d'Arenal ?")],
         tools: vec![],
         max_tokens: 200,
@@ -87,7 +87,7 @@ fn request() -> ChatRequest {
 
 const STREAM: &str = concat!(
     ": OPENROUTER PROCESSING\n\n",
-    "data: {\"model\":\"z-ai/glm-5.2-20260616\",\"choices\":[{\"delta\":{\"content\":\"À La \"}}]}\n\n",
+    "data: {\"model\":\"z-ai/glm-5.3-flash-20260826\",\"choices\":[{\"delta\":{\"content\":\"À La \"}}]}\n\n",
     "data: {\"choices\":[{\"delta\":{\"content\":\"Fortuna.\"},\"finish_reason\":\"stop\"}]}\n\n",
     "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":50,\"completion_tokens\":5,\"cost\":0.00001}}\n\n",
     "data: [DONE]\n\n",
@@ -102,7 +102,7 @@ async fn streams_a_reply_with_attribution_headers() {
         .unwrap();
     assert_eq!(reply.text, "À La Fortuna.");
     assert_eq!(reply.finish, FinishReason::Stop);
-    assert_eq!(reply.model, "z-ai/glm-5.2-20260616");
+    assert_eq!(reply.model, "z-ai/glm-5.3-flash-20260826");
     assert_eq!(reply.usage.prompt_tokens, 50);
     assert_eq!(reply.usage.cost_usd, 0.00001);
 
@@ -110,7 +110,7 @@ async fn streams_a_reply_with_attribution_headers() {
     assert_eq!(headers["authorization"], "Bearer sk-or-test");
     assert_eq!(headers["http-referer"], ORIGIN);
     assert_eq!(headers["x-title"], "TravelGuide");
-    assert_eq!(body["model"], "z-ai/glm-5.2");
+    assert_eq!(body["model"], "z-ai/glm-5.3-flash");
     assert_eq!(body["provider"]["data_collection"], "deny");
     assert_eq!(body["provider"]["only"], json!(["mistral/eu"]));
 }

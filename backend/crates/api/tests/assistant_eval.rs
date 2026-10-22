@@ -3,7 +3,7 @@
 //! ```bash
 //! OPENROUTER_API_KEY=sk-or-… cargo test -p api --test assistant_eval -- --ignored --nocapture
 //! # Modèles comparés (sinon AI_MODEL puis AI_MODELS_ALLOWED) :
-//! AI_EVAL_MODELS=z-ai/glm-5.2,z-ai/glm-5.3 cargo test …
+//! AI_EVAL_MODELS=z-ai/glm-5.3-flash,z-ai/glm-5.3 cargo test …
 //! ```
 //!
 //! Incrément A0 : squelette et premier scénario (un appel d'outil). Les scénarios sur un
@@ -75,7 +75,17 @@ const SYSTEM: &str = "Tu es l'assistant d'un voyage de groupe. Utilise les outil
 #[tokio::test]
 #[ignore = "appelle OpenRouter (clé et crédit requis)"]
 async fn compare_models() {
-    let _ = dotenvy::from_filename("../../../.env");
+    // `.env` est écrit pour docker compose : une ligne illisible pour dotenvy (valeur avec
+    // espaces non citée) ne doit pas empêcher de lire les suivantes.
+    for (key, value) in dotenvy::from_filename_iter("../../../.env")
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        if std::env::var_os(&key).is_none() {
+            std::env::set_var(key, value);
+        }
+    }
     let ai = AiConfig::from_env()
         .expect("configuration IA invalide")
         .expect("OPENROUTER_API_KEY manquante");
