@@ -4,6 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // MapLibre cherche son worker à côté de son propre fichier, que Vite déplace (pré-bundling
 // en dev, hachage en production) : on lui donne l'URL du fichier servi par Vite.
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
+import type { FeatureCollection } from 'geojson'
 import type { Bounds, Category } from '../api/pois'
 import { t } from '../i18n/fr'
 import { useHoverStore, useMapHovered, type MapHover } from './mapHover'
@@ -246,7 +247,7 @@ export function MapView({ markers = [], selectedId, draft, addMode, route, onSel
         ? new maplibregl.Marker({ element: ghostElement() }).setLngLat([hover.lon, hover.lat]).addTo(map)
         : null
     if (styleReady) {
-      const data: GeoJSON.FeatureCollection = {
+      const data: FeatureCollection = {
         type: 'FeatureCollection',
         features:
           hover?.kind === 'area'
