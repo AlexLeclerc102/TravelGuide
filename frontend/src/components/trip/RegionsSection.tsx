@@ -5,7 +5,10 @@ import { placeToInput, sameOsm, useCreatePoi, type Poi } from '../../api/pois'
 import { suggestionKeys, useRegions, type Region } from '../../api/suggestions'
 import type { Trip } from '../../api/trips'
 import { t } from '../../i18n/fr'
+import { Icon } from '../Icon'
+import { pointAt, useHoverStore, useMapHover, type MapHover } from '../mapHover'
 import { poiLinks } from '../../lib/links'
+import { PlaceWikiCard } from './WikiCard'
 
 const external = { target: '_blank', rel: 'noopener noreferrer nofollow' } as const
 
@@ -66,10 +69,30 @@ function RegionCard({ trip, region: r, pois, canEdit }: { trip: Trip; region: Re
     }
   }
 
+  const hover = useMapHover()
+  const store = useHoverStore()
+  const [expanded, setExpanded] = useState(false)
+  const area: MapHover = { kind: 'area', lat: r.lat, lon: r.lon, radiusM: r.radius_m }
+  const detailsId = `region-${r.osm ? `${r.osm.type}-${r.osm.id}` : r.name.replace(/\W+/g, '-')}`
+
+  function toggle() {
+    setExpanded(!expanded)
+    if (!expanded) store.focus(area)
+  }
+
   return (
-    <li className="region-card">
+    <li className={`region-card${expanded ? ' expanded' : ''}`} {...hover(area)}>
       <div className="region-head">
-        <strong>{r.name}</strong>
+        <button
+          type="button"
+          className="region-toggle"
+          aria-expanded={expanded}
+          aria-controls={detailsId}
+          title={t.regions.details(r.name)}
+          onClick={toggle}
+        >
+          <strong>{r.name}</strong>
+        </button>
         <span className="muted small">
           {r.access === 'boat_or_plane' ? t.regions.expedition : t.regions.nights(r.nights)} ·{' '}
           {r.themes.map((c) => t.categories[c]).join(', ')}
@@ -81,23 +104,32 @@ function RegionCard({ trip, region: r, pois, canEdit }: { trip: Trip; region: Re
         )}
         {r.in_trip > 0 && <span className="tag tag-in-trip">{t.regions.inTrip(r.in_trip)}</span>}
       </div>
+      {expanded && (
+        <div id={detailsId} className="region-details">
+          <PlaceWikiCard tripId={trip.id} wiki={r} />
+        </div>
+      )}
       {r.access === 'boat_or_plane' && <p className="notice small">{t.regions.boatOrPlane}</p>}
       {r.world_heritage.length > 0 && (
         <p className="small">{t.regions.worldHeritage(r.world_heritage.join(', '))}</p>
       )}
-      <ul className="small region-highlights">
+      {expanded && <h3 className="small region-subtitle">{t.regions.highlights}</h3>}
+      <ul className={`small region-highlights${expanded ? ' rich' : ''}`}>
         {r.highlights.map((h) => {
           const wiki = poiLinks({ ...h, address: '' }).find((l) => l.kind === 'wikipedia')
           return (
-            <li key={h.osm ? `${h.osm.type}/${h.osm.id}` : h.name}>
-              <span aria-hidden>{t.categoryIcons[h.category]} </span>
-              {wiki ? (
-                <a href={wiki.href} {...external}>
-                  {h.name}
-                </a>
-              ) : (
-                h.name
-              )}
+            <li key={h.osm ? `${h.osm.type}/${h.osm.id}` : h.name} {...hover(pointAt(h), area)}>
+              <span className="region-highlight-name">
+                <Icon name={h.category} size={14} />{' '}
+                {wiki ? (
+                  <a href={wiki.href} {...external}>
+                    {h.name}
+                  </a>
+                ) : (
+                  h.name
+                )}
+              </span>
+              {expanded && <PlaceWikiCard tripId={trip.id} wiki={h} compact />}
             </li>
           )
         })}

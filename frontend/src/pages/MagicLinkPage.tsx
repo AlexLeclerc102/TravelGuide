@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useVerifyMagicLink } from '../api/auth'
 import { safeNext } from '../auth/safeNext'
+import { AuthShell } from '../components/AuthShell'
 import { t } from '../i18n/fr'
 
 /**
@@ -24,10 +25,10 @@ export function MagicLinkPage() {
 
   if (!token || verify.isError) {
     return (
-      <div className="card auth-card">
+      <AuthShell>
         <p className="error" role="alert">{t.magic.invalid}</p>
         <Link to="/login">{t.magic.retry}</Link>
-      </div>
+      </AuthShell>
     )
   }
   return <p className="centered muted">{t.magic.verifying}</p>

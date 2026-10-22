@@ -172,12 +172,12 @@ describe('itinéraire', () => {
 
     const first = await screen.findByRole('region', { name: 'mar. 1 déc.' })
     expect(within(first).getByText(/2 étapes · visites 2 h 45 · trajets 23 min · fin 12:28/)).toBeInTheDocument()
-    expect(within(first).getByText('🛏 Départ : Hotel San José')).toBeInTheDocument()
+    expect(within(first).getByText('Départ : Hotel San José')).toBeInTheDocument()
     expect(within(first).getByText('09:30–11:00')).toBeInTheDocument()
     expect(within(first).getByText('attente 20 min')).toBeInTheDocument()
     // Trajet estimé : signalé.
-    expect(within(first).getByText(/🚶 À pied · ≈ 5 min · 400 m · estimation à vol d’oiseau/)).toBeInTheDocument()
-    expect(within(first).getByText('🛏 Arrivée : Hotel San José')).toBeInTheDocument()
+    expect(within(first).getByText(/À pied · ≈ 5 min · 400 m · estimation à vol d’oiseau/)).toBeInTheDocument()
+    expect(within(first).getByText('Arrivée : Hotel San José')).toBeInTheDocument()
 
     expect(screen.getByRole('region', { name: 'mer. 2 déc.' })).toHaveTextContent('Journée libre')
     expect(screen.getByText('fermé à toutes les dates du voyage')).toBeInTheDocument()
@@ -187,7 +187,7 @@ describe('itinéraire', () => {
 
     // Cliquer sur une étape ouvre la fiche du lieu.
     fireEvent.click(within(first).getByRole('button', { name: 'Café Central' }))
-    expect(await screen.findByRole('heading', { name: '🍽️ Café Central' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Café Central' })).toBeInTheDocument()
     expect(screen.getByTestId('map')).toHaveTextContent('carte')
   })
 
@@ -310,7 +310,7 @@ describe('ajustements manuels', () => {
     )
     await openItinerary()
     const first = await screen.findByRole('region', { name: 'mar. 1 déc.' })
-    expect(within(first).getByText('⚠ fermé à cette heure')).toBeInTheDocument()
+    expect(within(first).getByText('fermé à cette heure')).toBeInTheDocument()
     expect(within(first).getByText('La journée dépasse la fin prévue (19:00).')).toBeInTheDocument()
 
     fireEvent.click(within(first).getByRole('button', { name: 'Monter Café Central' }))

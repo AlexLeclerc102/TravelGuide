@@ -91,7 +91,7 @@ describe('voyages', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Membres' }))
     expect(screen.getByRole('heading', { name: 'Membres' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Invitations' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: 'Paramètres' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Réglages' }))
     expect(screen.queryByRole('heading', { name: 'Paramètres du voyage' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Quitter ce voyage' })).toBeInTheDocument()
   })

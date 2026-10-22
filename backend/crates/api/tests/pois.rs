@@ -528,8 +528,36 @@ async fn wikipedia_summary_of_a_place(db: PgPool) {
     assert_eq!(res.body["summary"], Value::Null);
     assert_eq!(app.wiki.calls.load(Ordering::SeqCst), calls);
 
+    // Lieu hors du voyage (région, suggestion) : par ses références, validées.
+    let res = app
+        .get(
+            &format!("/api/v1/trips/{trip}/wiki?wikidata=Q2638513"),
+            Some(&viewer),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    assert_eq!(res.body["summary"]["title"], "Musée national du Costa Rica");
+    let res = app
+        .get(&format!("/api/v1/trips/{trip}/wiki"), Some(&viewer))
+        .await;
+    assert_eq!(res.body["summary"], Value::Null);
+    let res = app
+        .get(
+            &format!("/api/v1/trips/{trip}/wiki?wikidata=nope"),
+            Some(&viewer),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+
     // Lieu d'un autre voyage, ou non-membre : 404.
     let outsider = app.register("out@example.com", "Hors voyage").await;
+    let res = app
+        .get(
+            &format!("/api/v1/trips/{trip}/wiki?wikidata=Q2638513"),
+            Some(&outsider),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
     let res = app
         .get(&format!("{uri}/{museum_id}/wiki"), Some(&outsider))
         .await;

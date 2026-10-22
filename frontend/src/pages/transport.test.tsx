@@ -263,7 +263,7 @@ describe('séjours', () => {
 
     fireEvent.change(within(stay).getByRole('combobox', { name: 'Remplacer La Fortuna par' }), { target: { value: 'p2' } })
     await waitFor(() => expect(calls.at(-1)).toEqual({ path: 'replace', body: { from_poi_id: 'area', to_poi_id: 'p2', remove_from: true } }))
-    expect(await screen.findByText(/🛏️ Hotel Fortuna/)).toBeInTheDocument()
+    expect(await screen.findByText(/Hotel Fortuna/, { selector: '.stay-head strong' })).toBeInTheDocument()
   })
 })
 
@@ -296,7 +296,7 @@ describe('proposition d’étapes', () => {
     fireEvent.change(within(form).getByLabelText('Arrivée dans le pays'), { target: { value: 'p1' } })
     fireEvent.click(within(form).getByRole('button', { name: 'Proposer' }))
 
-    expect(await screen.findByText('🛏️ La Fortuna')).toBeInTheDocument()
+    expect(await screen.findByText('La Fortuna')).toBeInTheDocument()
     expect(calls[0]).toEqual({ path: 'proposal', body: { min_nights: 1, start_poi_id: 'p1', end_poi_id: null } })
     expect(screen.getByText(/2 lieux/)).toBeInTheDocument()
     expect(screen.getByText('≈ 150 min de route depuis l’étape précédente')).toBeInTheDocument()

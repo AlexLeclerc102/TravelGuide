@@ -113,7 +113,7 @@ export function PoiEditor({ tripId, poi, draft, onSaved, onClose }: Props) {
           <select value={form.category} onChange={(e) => setCategory(e.target.value as Category)}>
             {ALL_CATEGORIES.map((c) => (
               <option key={c} value={c}>
-                {t.categoryIcons[c]} {t.categories[c]}
+                {t.categories[c]}
               </option>
             ))}
           </select>

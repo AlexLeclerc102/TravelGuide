@@ -122,7 +122,7 @@ function routes(role: string, suggestions: () => Suggestions, extra: Parameters<
 
 async function openSuggestions() {
   renderApp('/trips/trip-1')
-  fireEvent.click(await screen.findByRole('tab', { name: 'Suggestions' }))
+  fireEvent.click(await screen.findByRole('tab', { name: 'Idées' }))
 }
 
 afterEach(() => vi.restoreAllMocks())
@@ -212,6 +212,9 @@ describe('suggestions', () => {
           in_trip: 1,
           world_heritage: [],
           wikivoyage: true,
+          wikidata: 'Q1',
+          wikipedia: null,
+          radius_m: 25_000,
         },
         {
           name: 'Base Wafer',
@@ -226,6 +229,9 @@ describe('suggestions', () => {
           in_trip: 0,
           world_heritage: ['Isla del Coco'],
           wikivoyage: false,
+          wikidata: null,
+          wikipedia: null,
+          radius_m: 25_000,
         },
       ],
     }
@@ -234,6 +240,27 @@ describe('suggestions', () => {
       routes('editor', () => ({ status: 'discovery', suggestions: [] }), {
         'GET /trips/trip-1/pois': () => ({ status: 200, body: pois }),
         'GET /trips/trip-1/regions': () => ({ status: 200, body: regions }),
+        'GET /trips/trip-1/wiki': () => ({
+          status: 200,
+          body: {
+            summary: {
+              title: 'La Fortuna',
+              description: 'village du Costa Rica',
+              extract: 'La Fortuna est un village au pied du volcan Arenal. Il compte des sources chaudes.',
+              lang: 'fr',
+              url: 'https://fr.wikipedia.org/wiki/La_Fortuna',
+              image: {
+                url: 'https://upload.wikimedia.org/fortuna.jpg',
+                width: 640,
+                height: 480,
+                page_url: 'https://commons.wikimedia.org/wiki/File:Fortuna.jpg',
+                artist: 'Ana',
+                license: 'CC BY-SA 4.0',
+              },
+              wikivoyage_url: null,
+            },
+          },
+        }),
         'POST /trips/trip-1/pois': (init) => {
           const body = JSON.parse(String(init?.body))
           added.push(body.name)
@@ -257,12 +284,25 @@ describe('suggestions', () => {
     const island = screen.getByText('Base Wafer', { selector: 'strong' }).closest('li')!
     expect(within(island).getByText(/Accessible uniquement en bateau ou en avion/)).toBeInTheDocument()
     expect(within(island).getByText(/Expédition de plusieurs jours/)).toBeInTheDocument()
-    expect(within(island).getByText('🏛 Patrimoine mondial de l’UNESCO : Isla del Coco')).toBeInTheDocument()
+    expect(within(island).getByText('Patrimoine mondial de l’UNESCO : Isla del Coco')).toBeInTheDocument()
     expect(within(island).queryByText('Guide Wikivoyage')).not.toBeInTheDocument()
     expect(within(island).queryByText(/nuit conseillée/)).not.toBeInTheDocument()
 
-    fireEvent.click(within(card).getByRole('button', { name: 'Ajouter les points forts de La Fortuna' }))
-    await waitFor(() => expect(within(card).getByRole('button', { name: /La Fortuna/ })).toHaveTextContent('Points forts ajoutés'))
+    // Cliquer la région la présente : résumé et photo Wikipédia, points forts illustrés.
+    const toggle = within(card).getByRole('button', { name: 'La Fortuna' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(await within(card).findByText(/au pied du volcan Arenal\. Il compte/)).toBeInTheDocument()
+    expect(within(card).getAllByRole('img', { name: 'Photo : La Fortuna' }).length).toBeGreaterThan(0)
+    expect(within(card).getByText('Points forts')).toBeInTheDocument()
+    // Sans référence Wikipédia, l'île n'a rien à charger.
+    fireEvent.click(within(island).getByRole('button', { name: 'Base Wafer' }))
+    expect(within(island).queryByText(/Chargement de la présentation/)).not.toBeInTheDocument()
+
+    const add = within(card).getByRole('button', { name: 'Ajouter les points forts de La Fortuna' })
+    fireEvent.click(add)
+    await waitFor(() => expect(add).toHaveTextContent('Points forts ajoutés'))
     expect(added).toEqual(['Volcán Arenal', 'Catarata Río Fortuna'])
   })
 

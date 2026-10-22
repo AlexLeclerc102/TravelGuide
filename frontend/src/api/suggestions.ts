@@ -57,6 +57,11 @@ export interface Region {
   world_heritage: string[]
   /** La localité où loger a un guide Wikivoyage. */
   wikivoyage: boolean
+  /** Références Wikipédia de la localité où loger, pour sa présentation. */
+  wikidata: string | null
+  wikipedia: string | null
+  /** Rayon de la région autour de son centre (mètres). */
+  radius_m: number
 }
 
 export interface Regions {

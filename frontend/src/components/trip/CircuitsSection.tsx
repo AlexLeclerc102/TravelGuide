@@ -6,6 +6,8 @@ import { suggestionKeys, useAirports, useProposeCircuits, type Circuit } from '.
 import { useApplyProposal } from '../../api/transport'
 import type { Trip } from '../../api/trips'
 import { t } from '../../i18n/fr'
+import { Icon } from '../Icon'
+import { pointAt, useMapHover } from '../mapHover'
 import { dayCount, formatDate, formatDuration } from '../../lib/format'
 
 const short = (date: string) => formatDate(date, { weekday: 'short', day: 'numeric', month: 'short' })
@@ -86,6 +88,7 @@ interface CardProps {
 }
 
 function CircuitCard({ index, circuit: c, trip, pois, canEdit }: CardProps) {
+  const hover = useMapHover()
   const qc = useQueryClient()
   const apply = useApplyProposal(trip.id)
   const create = useCreatePoi(trip.id)
@@ -132,9 +135,9 @@ function CircuitCard({ index, circuit: c, trip, pois, canEdit }: CardProps) {
       </div>
       <ol>
         {c.stops.map((s) => (
-          <li key={s.first_night}>
+          <li key={s.first_night} {...hover(pointAt(s))}>
             <span>
-              🛏️ <strong>{s.name}</strong>{' '}
+              <Icon name="lodging" /> <strong>{s.name}</strong>{' '}
               <span className="small muted">
                 {t.stays.nights(s.nights)} · {t.stays.range(short(s.first_night), short(s.last_night))}
               </span>

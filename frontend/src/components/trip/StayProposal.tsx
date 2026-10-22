@@ -4,12 +4,15 @@ import type { Poi } from '../../api/pois'
 import { useApplyProposal, useProposeStays } from '../../api/transport'
 import type { Trip } from '../../api/trips'
 import { t } from '../../i18n/fr'
+import { Icon } from '../Icon'
+import { pointAt, useMapHover } from '../mapHover'
 import { formatDate, formatDuration } from '../../lib/format'
 
 const short = (date: string) => formatDate(date, { weekday: 'short', day: 'numeric', month: 'short' })
 
 /** « Où dormir ? » : étapes proposées d'après les lieux du voyage, appliquées en un clic. */
 export function StayProposal({ trip, pois, canEdit }: { trip: Trip; pois: Poi[]; canEdit: boolean }) {
+  const hover = useMapHover()
   // Défaut selon le rythme du voyage (comme le serveur).
   const [minNights, setMinNights] = useState<number>(({ relaxed: 3, balanced: 2, packed: 1 } as const)[trip.pace] ?? 2)
   const [start, setStart] = useState('')
@@ -69,8 +72,8 @@ export function StayProposal({ trip, pois, canEdit }: { trip: Trip; pois: Poi[];
         <>
           <ol className="proposal-list">
             {proposal.stays.map((s) => (
-              <li key={s.first_night}>
-                <strong>🛏️ {s.name}</strong>{' '}
+              <li key={s.first_night} {...hover(pointAt(s))}>
+                <strong><Icon name="lodging" /> {s.name}</strong>{' '}
                 <span className="small muted">
                   {t.stays.nights(s.nights)} · {t.stays.range(short(s.first_night), short(s.last_night))} · {t.proposal.places(s.poi_ids.length)}
                 </span>

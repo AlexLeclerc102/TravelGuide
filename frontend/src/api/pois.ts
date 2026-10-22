@@ -156,6 +156,12 @@ export interface WikiSummary {
   wikivoyage_url: string | null
 }
 
+/** Références Wikipédia d'un lieu (`null` : aucune). */
+export interface WikiRef {
+  wikidata: string | null
+  wikipedia: string | null
+}
+
 /** Zone affichée : `[minLon, minLat, maxLon, maxLat]`. */
 export type Bounds = [number, number, number, number]
 
@@ -166,6 +172,7 @@ export const poiKeys = {
   reviews: (tripId: string, poiId: string) => [...tripKeys.one(tripId), 'pois', poiId, 'reviews'] as const,
   wiki: (tripId: string, poi: Pick<Poi, 'id' | 'wikidata' | 'wikipedia'>) =>
     [...tripKeys.one(tripId), 'pois', poi.id, 'wiki', poi.wikidata, poi.wikipedia] as const,
+  placeWiki: (tripId: string, ref: WikiRef) => [...tripKeys.one(tripId), 'wiki', ref.wikidata, ref.wikipedia] as const,
   opening: (tripId: string, value: string, country: string | null) =>
     [...tripKeys.one(tripId), 'opening', value, country] as const,
 }
@@ -271,6 +278,22 @@ export const usePoiWiki = (tripId: string, poi: Poi) =>
     queryKey: poiKeys.wiki(tripId, poi),
     queryFn: () => apiFetch<{ summary: WikiSummary | null }>(`/trips/${tripId}/pois/${poi.id}/wiki`),
     enabled: !!(poi.wikidata || poi.wikipedia),
+    staleTime: 60 * 60_000,
+    retry: false,
+    select: (data) => data.summary,
+  })
+
+/** Présentation Wikipédia d'un lieu hors du voyage (suggestion, région), d'après ses références. */
+export const usePlaceWiki = (tripId: string, ref: WikiRef, enabled = true) =>
+  useQuery({
+    queryKey: poiKeys.placeWiki(tripId, ref),
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (ref.wikidata) params.set('wikidata', ref.wikidata)
+      if (ref.wikipedia) params.set('wikipedia', ref.wikipedia)
+      return apiFetch<{ summary: WikiSummary | null }>(`/trips/${tripId}/wiki?${params}`)
+    },
+    enabled: enabled && !!(ref.wikidata || ref.wikipedia),
     staleTime: 60 * 60_000,
     retry: false,
     select: (data) => data.summary,

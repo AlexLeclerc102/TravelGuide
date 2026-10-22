@@ -5,7 +5,7 @@ import { errorMessage } from '../api/errors'
 import { useCreateTrip, useTrips } from '../api/trips'
 import { TripForm } from '../components/trip/TripForm'
 import { t } from '../i18n/fr'
-import { formatDateRange } from '../lib/format'
+import { dayCount, formatDateRange } from '../lib/format'
 
 export function TripsPage() {
   const { data: user } = useMe()
@@ -16,11 +16,15 @@ export function TripsPage() {
   const canCreate = user?.plan === 'organizer'
 
   return (
-    <div className="page">
+    <div className="page page-wide">
       <div className="page-header">
-        <h1>{t.trips.title}</h1>
+        <div>
+          {user && <p className="kicker">{t.trips.hello(user.display_name)}</p>}
+          <h1>{t.trips.title}</h1>
+        </div>
         {canCreate && !showForm && (
           <button type="button" className="primary" onClick={() => setShowForm(true)}>
+            <span aria-hidden="true">+ </span>
             {t.trips.create}
           </button>
         )}
@@ -29,7 +33,7 @@ export function TripsPage() {
       {!canCreate && <p className="notice">{t.trips.planRequired}</p>}
 
       {showForm && (
-        <section className="card">
+        <section className="card form-card">
           <h2>{t.trips.create}</h2>
           <TripForm
             submitLabel={t.trips.createSubmit}
@@ -49,14 +53,31 @@ export function TripsPage() {
         {trips?.map((trip) => (
           <li key={trip.id}>
             <Link to={`/trips/${trip.id}`} className="card trip-card">
-              <strong>{trip.name}</strong>
-              <span className="muted">{formatDateRange(trip.start_date, trip.end_date)}</span>
-              <span className="muted">
-                {t.roles[trip.my_role]} · {t.trips.members(trip.member_count)}
+              <span className="trip-card-map" aria-hidden="true" />
+              <span className="trip-card-body">
+                <span className="trip-card-head">
+                  <strong>{trip.name}</strong>
+                  <span className={`stamp${trip.my_role === 'organizer' ? '' : ' stamp-muted'}`}>{t.roles[trip.my_role]}</span>
+                </span>
+                <span className="mono-data">
+                  {formatDateRange(trip.start_date, trip.end_date)} · {dayCount(trip.start_date, trip.end_date)} j
+                </span>
+                <span className="muted small">{t.trips.members(trip.member_count)}</span>
               </span>
             </Link>
           </li>
         ))}
+        {canCreate && !showForm && (
+          <li>
+            <button type="button" className="trip-card trip-card-new" onClick={() => setShowForm(true)}>
+              <span className="trip-card-plus" aria-hidden="true">
+                +
+              </span>
+              <strong>{t.trips.newCardTitle}</strong>
+              <span className="muted small">{t.trips.newCardHint}</span>
+            </button>
+          </li>
+        )}
       </ul>
     </div>
   )

@@ -11,6 +11,7 @@ import {
 } from '../../api/transport'
 import { ALL_MODES, type TransportMode, type Trip } from '../../api/trips'
 import { t } from '../../i18n/fr'
+import { Icon } from '../Icon'
 import { StaysSection } from './StaysSection'
 import { formatDate, formatDistance, formatDuration } from '../../lib/format'
 
@@ -43,7 +44,9 @@ export function TransportPanel({ trip, pois, onRouteChange }: Props) {
           ))}
         </ul>
         <p className="tiny muted">{t.transport.lodgingHint}</p>
-        {usesTransit && <p className="hint">ⓘ {t.transport.transitNotice}</p>}
+        {usesTransit && <p className="hint">
+            <Icon name="info" size={15} /> {t.transport.transitNotice}
+          </p>}
       </section>
       <RouteCompare trip={trip} days={days} pois={pois} onRouteChange={onRouteChange} />
     </div>

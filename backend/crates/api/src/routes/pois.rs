@@ -1,10 +1,10 @@
 //! Points d'intérêt : lecture pour tous les membres, écriture pour les éditeurs.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
@@ -26,6 +26,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_poi, update_poi, delete_poi))
         .routes(routes!(preview_opening_hours))
         .routes(routes!(poi_wiki))
+        .routes(routes!(place_wiki))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -84,6 +85,15 @@ pub struct PoiWiki {
     pub summary: Option<WikiSummary>,
 }
 
+/// Lieu ou région hors du voyage (suggestion, région à découvrir), par ses références.
+#[derive(Deserialize, IntoParams)]
+pub struct WikiQuery {
+    /// Identifiant Wikidata (ex. `Q190622`).
+    pub wikidata: Option<String>,
+    /// Article Wikipédia au format OSM `langue:Titre`.
+    pub wikipedia: Option<String>,
+}
+
 /// Présentations demandées par utilisateur et par minute (le cache n'est pas décompté à part).
 const WIKI_PER_USER_PER_MINUTE: u32 = 60;
 
@@ -117,7 +127,41 @@ async fn poi_wiki(
     trips::require_role(&state.db, trip_id, current.user.id, Role::Viewer).await?;
     let dates = pois::trip_dates(&state.db, trip_id).await?;
     let poi = pois::get(&state.db, trip_id, poi_id, current.user.id, dates).await?;
-    if poi.wikidata.is_none() && poi.wikipedia.is_none() {
+    wiki_summary(
+        &state,
+        &current,
+        poi.wikidata.as_deref(),
+        poi.wikipedia.as_deref(),
+    )
+    .await
+}
+
+/// Présentation Wikipédia d'un lieu qui n'est pas (encore) dans le voyage : suggestion,
+/// région à découvrir. Mêmes sources et licences que pour un lieu du voyage.
+#[utoipa::path(get, path = "/trips/{trip_id}/wiki", tag = "lieux",
+    params(("trip_id" = Uuid, Path), WikiQuery),
+    responses((status = 200, body = PoiWiki), (status = 400, body = ErrorBody),
+        (status = 404, body = ErrorBody), (status = 429, body = ErrorBody),
+        (status = 503, body = ErrorBody)))]
+async fn place_wiki(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(trip_id): Path<Uuid>,
+    Query(query): Query<WikiQuery>,
+) -> AppResult<Json<PoiWiki>> {
+    trips::require_role(&state.db, trip_id, current.user.id, Role::Viewer).await?;
+    let wikidata = validate::wikidata(query.wikidata.as_deref())?;
+    let wikipedia = validate::wikipedia(query.wikipedia.as_deref())?;
+    wiki_summary(&state, &current, wikidata.as_deref(), wikipedia.as_deref()).await
+}
+
+async fn wiki_summary(
+    state: &AppState,
+    current: &CurrentUser,
+    wikidata: Option<&str>,
+    wikipedia: Option<&str>,
+) -> AppResult<Json<PoiWiki>> {
+    if wikidata.is_none() && wikipedia.is_none() {
         return Ok(Json(PoiWiki { summary: None }));
     }
     state.rate_limiter.check(
@@ -125,10 +169,7 @@ async fn poi_wiki(
         WIKI_PER_USER_PER_MINUTE,
         std::time::Duration::from_secs(60),
     )?;
-    let summary = state
-        .wiki
-        .summary(poi.wikidata.as_deref(), poi.wikipedia.as_deref())
-        .await?;
+    let summary = state.wiki.summary(wikidata, wikipedia).await?;
     Ok(Json(PoiWiki { summary }))
 }
 

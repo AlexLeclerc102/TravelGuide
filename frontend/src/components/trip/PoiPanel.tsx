@@ -13,6 +13,8 @@ import {
 } from '../../api/pois'
 import type { Trip } from '../../api/trips'
 import { t } from '../../i18n/fr'
+import { Icon } from '../Icon'
+import { pointAt, useMapHover } from '../mapHover'
 import { formatDate, formatRating } from '../../lib/format'
 import { PoiDetails, PoiEditor } from './PoiEditor'
 import { PoiLinks } from './PoiLinks'
@@ -39,6 +41,7 @@ function closedSummary(dates: string[]) {
 }
 
 export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeChange, locating, locateError, bounds }: Props) {
+  const hover = useMapHover()
   const canEdit = trip.my_role !== 'viewer'
   const selectedPoi = selection?.kind === 'poi' ? pois.find((p) => p.id === selection.id) : undefined
   const [sort, setSort] = useState<PoiSort>('added')
@@ -58,7 +61,7 @@ export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeCh
       {canEdit && (
         <div className="click-mode">
           <button type="button" aria-pressed={addMode} onClick={() => onAddModeChange(!addMode)}>
-            📍 {t.pois.clickMode}
+            <Icon name="pin" /> {t.pois.clickMode}
           </button>
           {addMode && <p className="hint">{t.pois.clickModeOn}</p>}
           {locating && <p className="muted small">{t.pois.locating}</p>}
@@ -87,7 +90,7 @@ export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeCh
           <div className="selected-header">
             <div>
               <h3>
-                {t.categoryIcons[selectedPoi.category]} {selectedPoi.name}
+                <Icon name={selectedPoi.category} size={20} /> {selectedPoi.name}
               </h3>
               <p className="muted small">
                 {t.categories[selectedPoi.category]} · {t.pois.minutes(selectedPoi.duration_min)}
@@ -142,14 +145,14 @@ export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeCh
         ) : (
           <ul className="poi-list">
             {sorted.map((p) => (
-              <li key={p.id}>
+              <li key={p.id} {...hover(pointAt(p, p.id))}>
                 <button
                   type="button"
                   className={`poi-item${selectedPoi?.id === p.id ? ' active' : ''}`}
                   onClick={() => onSelect({ kind: 'poi', id: p.id })}
                 >
                   <span className="poi-icon" aria-hidden>
-                    {t.categoryIcons[p.category]}
+                    <Icon name={p.category} />
                   </span>
                   <span className="poi-text">
                     <strong>
@@ -165,7 +168,7 @@ export function PoiPanel({ trip, pois, selection, onSelect, addMode, onAddModeCh
                           ★ {formatRating(p.rating.average)} · {t.reviews.count(p.rating.count)}
                         </span>
                       )}
-                      {p.rating.disagreement && <span className="tag tag-disagreement">⚡ {t.reviews.disagreement}</span>}
+                      {p.rating.disagreement && <span className="tag tag-disagreement"><Icon name="split" size={13} /> {t.reviews.disagreement}</span>}
                       {!p.my_review && <span className="muted">{t.reviews.toRate}</span>}
                     </span>
                     {p.closed_dates.length > 0 && <span className="small warning-text">{closedSummary(p.closed_dates)}</span>}
@@ -194,6 +197,7 @@ function PlaceSearch({
   onAdded: (poi: Poi) => void
   onSelectExisting: (id: string) => void
 }) {
+  const hover = useMapHover()
   const [text, setText] = useState('')
   // La recherche part à la validation du formulaire, avec la zone affichée à ce moment-là.
   const [submitted, setSubmitted] = useState<{ q: string; bounds: Bounds | null }>({ q: '', bounds: null })
@@ -244,9 +248,9 @@ function PlaceSearch({
                 const existing = pois.find((p) => sameOsm(p.osm, place.osm))
                 const name = place.name || place.display_name.split(',')[0]
                 return (
-                  <li key={place.osm ? `${place.osm.type}${place.osm.id}` : i}>
+                  <li key={place.osm ? `${place.osm.type}${place.osm.id}` : i} {...hover(pointAt(place, existing?.id))}>
                     <span className="poi-icon" aria-hidden>
-                      {t.categoryIcons[place.category]}
+                      <Icon name={place.category} />
                     </span>
                     <span className="poi-text">
                       <strong>{name}</strong>

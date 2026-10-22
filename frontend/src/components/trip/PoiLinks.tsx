@@ -1,5 +1,6 @@
 import type { Poi } from '../../api/pois'
 import { t } from '../../i18n/fr'
+import { Icon } from '../Icon'
 import { poiLinks } from '../../lib/links'
 
 /** Liens d'un lieu (site, contact, Wikipédia, cartes), visibles par tous les membres. */
@@ -15,7 +16,7 @@ export function PoiLinks({ poi }: { poi: Poi }) {
                 href={link.href}
                 {...(external && { target: '_blank', rel: 'noopener noreferrer nofollow' })}
               >
-                {t.links.icons[link.kind]} {link.value ?? t.links.labels[link.kind]}
+                <Icon name={link.kind} size={14} /> {link.value ?? t.links.labels[link.kind]}
               </a>
             </li>
           )

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { ALL_INTERESTS, ALL_MODES, type Budget, type Interest, type Pace, type TransportMode, type TripInput } from '../../api/trips'
 import { t } from '../../i18n/fr'
+import { Icon } from '../Icon'
 
 interface Props {
   initial?: Partial<TripInput>
@@ -104,7 +105,9 @@ export function TripForm({ initial, submitLabel, pending, error, onSubmit }: Pro
           </label>
         ))}
       </fieldset>
-      {form.default_modes?.includes('transit') && <p className="hint">ⓘ {t.transitEstimate}</p>}
+      {form.default_modes?.includes('transit') && <p className="hint">
+          <Icon name="info" size={15} /> {t.transitEstimate}
+        </p>}
       <fieldset className="preferences">
         <legend>{t.trips.preferences}</legend>
         <p className="hint">{t.trips.preferencesHint}</p>

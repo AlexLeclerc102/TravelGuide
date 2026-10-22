@@ -13,9 +13,11 @@ import {
 import { useTripDays, type TripDay } from '../../api/transport'
 import type { Trip } from '../../api/trips'
 import { t } from '../../i18n/fr'
+import { Icon } from '../Icon'
 import { poiLinks } from '../../lib/links'
 import { reasonText } from '../../lib/suggestions'
 import type { MapMarker } from '../MapView'
+import { pointAt, useMapHover } from '../mapHover'
 import { CircuitsSection } from './CircuitsSection'
 import { RegionsSection } from './RegionsSection'
 
@@ -63,7 +65,7 @@ export function SuggestionsPanel({ trip, pois, focusedId, onFocus, onMarkersChan
   return (
     <div className="poi-panel">
       <section className="card">
-        <h2 className="section-title">{t.tabs.suggestions}</h2>
+        <h2 className="section-title">{t.suggestions.title}</h2>
         <p className="small muted">{t.suggestions.intro}</p>
         <div className="chips" role="radiogroup" aria-label={t.suggestions.filterLabel}>
           {FILTERS.map((c) => (
@@ -144,12 +146,13 @@ function SuggestionCard({ trip, suggestion: s, pois, days, canEdit, focused, onF
   const { place } = s
   const links = poiLinks({ ...place, address: '' }).filter((l) => l.kind === 'website' || l.kind === 'wikipedia' || l.kind === 'osm')
   const error = create.error ?? dismiss.error
+  const hover = useMapHover()
 
   return (
-    <li id={suggestionId(s)} className={`suggestion-card${focused ? ' focused' : ''}`}>
+    <li id={suggestionId(s)} className={`suggestion-card${focused ? ' focused' : ''}`} {...hover(pointAt(place, suggestionId(s)))}>
       <button type="button" className="suggestion-head" onClick={onFocus}>
         <span className="poi-icon" aria-hidden>
-          {t.categoryIcons[place.category]}
+          <Icon name={place.category} />
         </span>
         <span className="poi-text">
           <strong>{place.name}</strong>

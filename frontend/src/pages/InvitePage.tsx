@@ -4,6 +4,7 @@ import { useMe, useRequestMagicLink } from '../api/auth'
 import { ApiError } from '../api/client'
 import { errorMessage } from '../api/errors'
 import { useAcceptInvitation, useInvitationPreview } from '../api/trips'
+import { AuthShell } from '../components/AuthShell'
 import { t } from '../i18n/fr'
 import { formatDateRange } from '../lib/format'
 
@@ -25,16 +26,16 @@ export function InvitePage() {
   if (preview.isPending || mePending) return <p className="centered muted">{t.common.loading}</p>
   if (preview.isError) {
     return (
-      <div className="card auth-card">
+      <AuthShell perks>
         <p className="error" role="alert">{t.invite.invalid}</p>
-      </div>
+      </AuthShell>
     )
   }
 
   const inv = preview.data
   return (
-    <div className="card auth-card">
-      <p className="muted">{inv.invited_by ? t.invite.invitedBy(inv.invited_by) : t.invite.invited}</p>
+    <AuthShell perks>
+      <p className="invite-banner">{inv.invited_by ? t.invite.invitedBy(inv.invited_by) : t.invite.invited}</p>
       <h1>{inv.trip_name}</h1>
       <p className="muted">
         {formatDateRange(inv.start_date, inv.end_date)} · {t.invite.asRole(t.roles[inv.role])}
@@ -84,6 +85,6 @@ export function InvitePage() {
       ) : (
         accept.isError && <p className="error" role="alert">{errorMessage(accept.error)}</p>
       )}
-    </div>
+    </AuthShell>
   )
 }

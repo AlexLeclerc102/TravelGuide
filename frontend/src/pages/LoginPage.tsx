@@ -4,6 +4,7 @@ import { useLogin, useMe, useRequestMagicLink } from '../api/auth'
 import { ApiError } from '../api/client'
 import { errorMessage } from '../api/errors'
 import { safeNext } from '../auth/safeNext'
+import { AuthShell } from '../components/AuthShell'
 import { t } from '../i18n/fr'
 
 type Mode = 'password' | 'magic'
@@ -36,7 +37,7 @@ export function LoginPage() {
       : login.error && errorMessage(login.error)
 
   return (
-    <div className="card auth-card">
+    <AuthShell>
       <h1>{t.login.title}</h1>
       <div className="tabs" role="tablist">
         <button
@@ -100,6 +101,6 @@ export function LoginPage() {
       <p className="muted">
         {t.login.noAccount} <Link to={`/register?next=${encodeURIComponent(next)}`}>{t.login.register}</Link>
       </p>
-    </div>
+    </AuthShell>
   )
 }

@@ -3,6 +3,7 @@ import { useMe } from '../../api/auth'
 import { errorMessage } from '../../api/errors'
 import { useReviews, useSaveMyReview, type MyReview, type Poi } from '../../api/pois'
 import { t } from '../../i18n/fr'
+import { Icon } from '../Icon'
 import { formatRating } from '../../lib/format'
 import { StarInput, Stars } from './Stars'
 
@@ -31,7 +32,7 @@ export function ReviewsSection({ tripId, poi }: { tripId: string; poi: Poi }) {
         <p className="group-rating">
           <Stars value={rating.average} /> <strong>{t.reviews.average(formatRating(rating.average))}</strong>{' '}
           <span className="muted small">· {t.reviews.count(rating.count)}</span>
-          {rating.disagreement && <span className="tag tag-disagreement">⚡ {t.reviews.disagreement}</span>}
+          {rating.disagreement && <span className="tag tag-disagreement"><Icon name="split" size={13} /> {t.reviews.disagreement}</span>}
         </p>
       )}
       {rating.disagreement && rating.min !== null && rating.max !== null && (

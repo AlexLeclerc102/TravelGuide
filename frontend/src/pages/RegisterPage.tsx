@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useMe, useRegister } from '../api/auth'
 import { errorMessage } from '../api/errors'
 import { safeNext } from '../auth/safeNext'
+import { AuthShell } from '../components/AuthShell'
 import { t } from '../i18n/fr'
 
 export function RegisterPage() {
@@ -24,7 +25,7 @@ export function RegisterPage() {
     setForm({ ...form, [key]: e.target.value })
 
   return (
-    <div className="card auth-card">
+    <AuthShell perks>
       <h1>{t.register.title}</h1>
       <form onSubmit={onSubmit} className="form">
         <label>
@@ -56,6 +57,6 @@ export function RegisterPage() {
       <p className="muted">
         {t.register.haveAccount} <Link to={`/login?next=${encodeURIComponent(next)}`}>{t.register.login}</Link>
       </p>
-    </div>
+    </AuthShell>
   )
 }

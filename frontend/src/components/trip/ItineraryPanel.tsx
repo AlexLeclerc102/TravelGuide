@@ -27,6 +27,8 @@ import type { Poi } from '../../api/pois'
 import { useRoutePlan, type TravelOption } from '../../api/transport'
 import type { Trip } from '../../api/trips'
 import { t } from '../../i18n/fr'
+import { Icon } from '../Icon'
+import { pointAt, useMapHover } from '../mapHover'
 import { formatDate, formatDistance, formatDuration } from '../../lib/format'
 
 interface Props {
@@ -55,6 +57,7 @@ export function ItineraryPanel({ trip, pois, onRouteChange, onSelectPoi }: Props
   const adjust = useAdjustItinerary(trip.id)
   const canEdit = trip.my_role !== 'viewer'
   const names = useMemo(() => new Map(pois.map((p) => [p.id, p.name])), [pois])
+  const byId = useMemo(() => new Map(pois.map((p) => [p.id, p])), [pois])
 
   if (isPending) return <p className="muted">{t.common.loading}</p>
   if (error) return <p className="error">{errorMessage(error)}</p>
@@ -105,13 +108,16 @@ export function ItineraryPanel({ trip, pois, onRouteChange, onSelectPoi }: Props
         {generateError}
         {adjustError && <p className="error small" role="alert">{adjustError}</p>}
         {itinerary.stale && <p className="notice warning small">{t.itinerary.stale}</p>}
-        {itinerary.has_estimates && <p className="hint">ⓘ {t.itinerary.estimates}</p>}
+        {itinerary.has_estimates && <p className="hint">
+            <Icon name="info" size={15} /> {t.itinerary.estimates}
+          </p>}
         {canEdit && <p className="tiny muted">{t.itinerary.editHint}</p>}
       </section>
       <Days
         itinerary={itinerary}
         tripId={trip.id}
         names={names}
+        byId={byId}
         editor={editor}
         onRouteChange={onRouteChange}
         onSelectPoi={onSelectPoi}
@@ -125,12 +131,13 @@ interface DaysProps {
   itinerary: Itinerary
   tripId: string
   names: Map<string, string>
+  byId: Map<string, Poi>
   editor: Editor | null
   onRouteChange: Props['onRouteChange']
   onSelectPoi: Props['onSelectPoi']
 }
 
-function Days({ itinerary, tripId, names, editor, onRouteChange, onSelectPoi }: DaysProps) {
+function Days({ itinerary, tripId, names, byId, editor, onRouteChange, onSelectPoi }: DaysProps) {
   // Jour affiché sur la carte : par défaut le premier qui a des étapes.
   const [shown, setShown] = useState<string | null>(() => itinerary.days.find((d) => d.stops.length > 0)?.date ?? null)
   const day = itinerary.days.find((d) => d.date === shown)
@@ -190,6 +197,7 @@ function Days({ itinerary, tripId, names, editor, onRouteChange, onSelectPoi }: 
       day={d}
       days={itinerary.days}
       names={names}
+      byId={byId}
       editor={editor}
       shown={d.date === shown}
       onShow={() => setShown(d.date)}
@@ -220,15 +228,21 @@ interface DayCardProps {
   day: ItineraryDay
   days: ItineraryDay[]
   names: Map<string, string>
+  byId: Map<string, Poi>
   editor: Editor | null
   shown: boolean
   onShow: () => void
   onSelectPoi: (id: string) => void
 }
 
-function DayCard({ day, days, names, editor, shown, onShow, onSelectPoi }: DayCardProps) {
+function DayCard({ day, days, names, byId, editor, shown, onShow, onSelectPoi }: DayCardProps) {
   const label = dayLabel(day.date)
   const name = (id: string) => names.get(id) ?? '—'
+  const hover = useMapHover()
+  const hoverPoi = (id: string | null) => {
+    const p = id ? byId.get(id) : undefined
+    return hover(p ? pointAt(p, p.id) : null)
+  }
   // Toute la carte accepte un dépôt : c'est ainsi qu'on remplit une journée vide.
   const { setNodeRef, isOver } = useDroppable({ id: DAY_DROP + day.date, disabled: !editor })
   const stopIds = day.stops.map((s) => s.poi_id)
@@ -241,7 +255,11 @@ function DayCard({ day, days, names, editor, shown, onShow, onSelectPoi }: DayCa
       <div className="day-head">
         <button type="button" className="day-title" onClick={onShow} aria-pressed={shown} title={t.itinerary.showOnMap(label)}>
           <strong>{label}</strong>
-          <span className="tiny muted">{day.modes.map((m) => t.modeIcons[m]).join(' ')}</span>
+          <span className="tiny muted day-modes" aria-label={day.modes.map((m) => t.modes[m]).join(', ')}>
+            {day.modes.map((m) => (
+              <Icon key={m} name={m} size={15} />
+            ))}
+          </span>
           {day.stale && <span className="tag tag-estimate">{t.itinerary.staleDay}</span>}
         </button>
         {editor && day.stale && (
@@ -265,10 +283,10 @@ function DayCard({ day, days, names, editor, shown, onShow, onSelectPoi }: DayCa
       {day.overtime && <p className="notice warning small">{t.itinerary.overtime(day.day_end)}</p>}
       <ol className="timeline">
         {day.start_poi_id && (day.stops.length > 0 || day.back) && (
-          <li className="lodging">
+          <li className="lodging" {...hoverPoi(day.start_poi_id)}>
             <span className="time">{day.day_start}</span>
             <span>
-              🛏 {t.itinerary.departure} : {name(day.start_poi_id)}
+              <Icon name="lodging" size={15} /> {t.itinerary.departure} : {name(day.start_poi_id)}
             </span>
           </li>
         )}
@@ -282,6 +300,7 @@ function DayCard({ day, days, names, editor, shown, onShow, onSelectPoi }: DayCa
               day={day}
               days={days}
               editor={editor}
+              hover={hoverPoi(s.poi_id)}
               onSelect={() => onSelectPoi(s.poi_id)}
             />
           ))}
@@ -289,10 +308,10 @@ function DayCard({ day, days, names, editor, shown, onShow, onSelectPoi }: DayCa
         {editor && day.stops.length === 0 && <li className="drop-hint tiny muted">{t.itinerary.dropHere}</li>}
         {day.back && <TravelItem travel={day.back} />}
         {day.end_poi_id && day.back && (
-          <li className="lodging">
+          <li className="lodging" {...hoverPoi(day.end_poi_id)}>
             <span className="time">{day.finish}</span>
             <span>
-              🛏 {t.itinerary.arrival} : {name(day.end_poi_id)}
+              <Icon name="lodging" size={15} /> {t.itinerary.arrival} : {name(day.end_poi_id)}
             </span>
           </li>
         )}
@@ -308,10 +327,12 @@ interface StopProps {
   day: ItineraryDay
   days: ItineraryDay[]
   editor: Editor | null
+  /** Mise en évidence du lieu sur la carte. */
+  hover: ReturnType<ReturnType<typeof useMapHover>>
   onSelect: () => void
 }
 
-function StopItem({ stop, name, index, day, days, editor, onSelect }: StopProps) {
+function StopItem({ stop, name, index, day, days, editor, hover, onSelect }: StopProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: stop.poi_id,
     disabled: !editor,
@@ -323,7 +344,12 @@ function StopItem({ stop, name, index, day, days, editor, onSelect }: StopProps)
   return (
     <>
       {stop.travel && <TravelItem travel={stop.travel} />}
-      <li ref={setNodeRef} style={style} className={`stop${isDragging ? ' dragging' : ''}${stop.issue ? ' has-issue' : ''}`}>
+      <li
+        ref={setNodeRef}
+        style={style}
+        className={`stop${isDragging ? ' dragging' : ''}${stop.issue ? ' has-issue' : ''}`}
+        {...hover}
+      >
         {editor && (
           <button type="button" className="drag-handle" aria-label={t.itinerary.drag(name)} {...attributes} {...listeners}>
             ⠿
@@ -334,12 +360,10 @@ function StopItem({ stop, name, index, day, days, editor, onSelect }: StopProps)
           {name}
         </button>
         {stop.locked && !editor && (
-          <span title={t.itinerary.lockedHint} aria-label={t.itinerary.lockedHint}>
-            🔒
-          </span>
+          <Icon name="lock" size={15} label={t.itinerary.lockedHint} />
         )}
         {stop.wait_s >= 60 && <span className="tiny muted">{t.itinerary.wait(formatDuration(stop.wait_s))}</span>}
-        {stop.issue && <span className="tag tag-estimate">⚠ {t.itinerary.issues[stop.issue]}</span>}
+        {stop.issue && <span className="tag tag-estimate"><Icon name="warning" size={13} /> {t.itinerary.issues[stop.issue]}</span>}
         {editor && (
           <span className="stop-actions">
             <button
@@ -369,7 +393,7 @@ function StopItem({ stop, name, index, day, days, editor, onSelect }: StopProps)
               disabled={editor.pending}
               onClick={() => editor.send({ kind: 'lock', poi_id: stop.poi_id, locked: !stop.locked })}
             >
-              {stop.locked ? '🔒' : '🔓'}
+              <Icon name={stop.locked ? 'lock' : 'unlock'} size={15} />
             </button>
             <select
               className="move-select"
@@ -404,7 +428,7 @@ function TravelItem({ travel }: { travel: TravelOption }) {
     <li className="travel">
       <span className="time" />
       <span className="tiny muted">
-        {t.modeIcons[travel.mode]} {t.modes[travel.mode]} · {estimate && '≈ '}
+        <Icon name={travel.mode} size={14} /> {t.modes[travel.mode]} · {estimate && '≈ '}
         {formatDuration(travel.duration_s)} · {formatDistance(travel.distance_m)}
         {estimate && ` · ${t.transport.sources[travel.source]}`}
       </span>

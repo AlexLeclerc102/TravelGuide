@@ -81,6 +81,12 @@ pub struct Region {
     pub world_heritage: Vec<String>,
     /// La localité où loger a un guide Wikivoyage.
     pub wikivoyage: bool,
+    /// Références Wikipédia de la localité où loger (ou du lieu le plus notable), pour sa
+    /// présentation.
+    pub wikidata: Option<String>,
+    pub wikipedia: Option<String>,
+    /// Rayon de la région autour de son centre, en mètres.
+    pub radius_m: f64,
     /// Intérêt de la région pour un circuit : ses meilleurs points forts seulement (on ne voit
     /// pas tout d'une capitale en une étape), notoriété pondérée par les envies.
     #[serde(skip)]
@@ -126,6 +132,8 @@ struct SettlementRow {
     lodging: i64,
     /// Guide Wikivoyage de la localité.
     wikivoyage: bool,
+    wikidata: Option<String>,
+    wikipedia: Option<String>,
 }
 
 /// Localité où loger pour une région : parmi les villes et villages autour, hors celles
@@ -142,7 +150,7 @@ async fn base(
                 ST_Y(s.location::geometry) AS lat, ST_X(s.location::geometry) AS lon,
                 (SELECT count(*) FROM osm_places h
                  WHERE h.category = 'lodging' AND ST_DWithin(h.location, s.location, 2000)) AS lodging,
-                coalesce(n.wikivoyage, false) AS wikivoyage
+                coalesce(n.wikivoyage, false) AS wikivoyage, s.wikidata, s.wikipedia
          FROM osm_places s CROSS JOIN here
          LEFT JOIN wikidata_notability n ON n.qid = s.wikidata
          WHERE s.osm_tag IN ('place=city', 'place=town', 'place=village')
@@ -297,26 +305,37 @@ pub async fn regions(
     let mut out = vec![];
     let mut used = vec![];
     for region in regions::regions(&spots, day_budget_s) {
-        let (name, lat, lon, osm, wikivoyage) = match base(db, &spots, &region, &used).await? {
-            Some(s) => {
-                used.push((s.osm_type.clone(), s.osm_id));
-                (
-                    s.name,
-                    s.lat,
-                    s.lon,
-                    OsmType::parse(&s.osm_type).map(|osm_type| OsmRef {
-                        osm_type,
-                        id: s.osm_id,
-                    }),
-                    s.wikivoyage,
-                )
-            }
-            None => {
-                let top = &places[region.members[0]];
-                let at = region.center;
-                (top.name.clone(), at.lat, at.lon, None, false)
-            }
-        };
+        let (name, lat, lon, osm, wikivoyage, wikidata, wikipedia) =
+            match base(db, &spots, &region, &used).await? {
+                Some(s) => {
+                    used.push((s.osm_type.clone(), s.osm_id));
+                    (
+                        s.name,
+                        s.lat,
+                        s.lon,
+                        OsmType::parse(&s.osm_type).map(|osm_type| OsmRef {
+                            osm_type,
+                            id: s.osm_id,
+                        }),
+                        s.wikivoyage,
+                        s.wikidata,
+                        s.wikipedia,
+                    )
+                }
+                None => {
+                    let top = &places[region.members[0]];
+                    let at = region.center;
+                    (
+                        top.name.clone(),
+                        at.lat,
+                        at.lon,
+                        None,
+                        false,
+                        top.wikidata.clone(),
+                        top.wikipedia.clone(),
+                    )
+                }
+            };
         // Un même site sous plusieurs objets (parc et volcan…) : cité une fois.
         let mut unesco: Vec<String> = vec![];
         for &i in region.members.iter().filter(|&&i| world_heritage[i]) {
@@ -360,6 +379,9 @@ pub async fn regions(
                 .count(),
             world_heritage: unesco,
             wikivoyage,
+            wikidata,
+            wikipedia,
+            radius_m: RADIUS_M,
             // Ses meilleurs points forts, plus la moitié de tout ce qui répond aux envies du groupe
             // (une côte pleine de plages vaut le détour pour qui les aime).
             weight: region

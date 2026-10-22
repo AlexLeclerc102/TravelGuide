@@ -5,6 +5,8 @@ import { useSuggestions } from '../../api/suggestions'
 import { useReplaceStay, useSetStay, type TripDay } from '../../api/transport'
 import type { Trip } from '../../api/trips'
 import { t } from '../../i18n/fr'
+import { Icon } from '../Icon'
+import { pointAt, useMapHover } from '../mapHover'
 import { formatDate } from '../../lib/format'
 import { lodgingSearchLinks, placeQuery } from '../../lib/links'
 import { stays, type Stay } from '../../lib/stays'
@@ -42,16 +44,17 @@ export function StaysSection({ trip, days, pois, canEdit }: Props) {
 }
 
 function StayRow({ trip, stay, poi, pois, canEdit }: { trip: Trip; stay: Stay; poi?: Poi; pois: Poi[]; canEdit: boolean }) {
+  const hover = useMapHover()
   const replace = useReplaceStay(trip.id)
   const hotels = pois.filter((p) => p.category === 'lodging' && !p.placeholder && p.id !== poi?.id)
   // Recherche autour de la zone ou de l'hôtel choisi, pour ces dates et tout le groupe.
   const search = poi && lodgingSearchLinks({ query: placeQuery(poi), checkin: stay.checkin, checkout: stay.checkout, adults: trip.member_count })
 
   return (
-    <li className={`stay-row${poi?.placeholder ? ' area' : ''}`}>
+    <li className={`stay-row${poi?.placeholder ? ' area' : ''}`} {...hover(poi ? pointAt(poi, poi.id) : null)}>
       <div className="stay-head">
         <strong>
-          🛏️ {poi ? poi.name : t.stays.none}
+          <Icon name="lodging" /> {poi ? poi.name : t.stays.none}
           {poi?.placeholder && <span className="tag tag-area"> {t.stays.area}</span>}
         </strong>
         <span className="small muted">
@@ -104,6 +107,7 @@ function StayRow({ trip, stay, poi, pois, canEdit }: { trip: Trip; stay: Stay; p
 
 /** Hébergements OSM autour d'une zone ; « Choisir » l'ajoute et remplace la zone. */
 function AreaHotels({ trip, area, canEdit }: { trip: Trip; area: Poi; canEdit: boolean }) {
+  const hover = useMapHover()
   const [open, setOpen] = useState(false)
   const { data, error, isPending } = useSuggestions(trip.id, { lodgingNear: area.id }, open)
   const create = useCreatePoi(trip.id)
@@ -126,7 +130,7 @@ function AreaHotels({ trip, area, canEdit }: { trip: Trip; area: Poi; canEdit: b
       {hotels.length > 0 && (
         <ul className="result-list">
           {hotels.map(({ place, travel_min }) => (
-            <li key={`${place.osm?.type}${place.osm?.id}`}>
+            <li key={`${place.osm?.type}${place.osm?.id}`} {...hover(pointAt(place))}>
               <span className="poi-text">
                 <strong>{place.name}</strong>
                 <span className="muted small">
@@ -167,6 +171,7 @@ function AreaHotels({ trip, area, canEdit }: { trip: Trip; area: Poi; canEdit: b
 
 /** Nouveau séjour : un hébergement du voyage, ou une ville (zone à préciser), et ses nuits. */
 function AddStay({ trip, days, pois }: { trip: Trip; days: TripDay[]; pois: Poi[] }) {
+  const hover = useMapHover()
   const lodging = pois.filter((p) => p.category === 'lodging')
   const [poiId, setPoiId] = useState('')
   const [town, setTown] = useState<Place | null>(null)
@@ -261,7 +266,7 @@ function AddStay({ trip, days, pois }: { trip: Trip; days: TripDay[]; pois: Poi[
           ) : (
             <ul className="result-list" aria-label={t.stays.searchTown}>
               {search.data.map((place, i) => (
-                <li key={place.osm ? `${place.osm.type}${place.osm.id}` : i}>
+                <li key={place.osm ? `${place.osm.type}${place.osm.id}` : i} {...hover(pointAt(place))}>
                   <span className="poi-text">
                     <strong>{place.name || place.display_name.split(',')[0]}</strong>
                     <span className="muted small">{place.display_name}</span>
@@ -283,7 +288,7 @@ function AddStay({ trip, days, pois }: { trip: Trip; days: TripDay[]; pois: Poi[
         )}
         {town && (
           <p className="small">
-            🛏️ <strong>{town.name || town.display_name.split(',')[0]}</strong> <span className="tag tag-area">{t.stays.area}</span>
+            <Icon name="lodging" /> <strong>{town.name || town.display_name.split(',')[0]}</strong> <span className="tag tag-area">{t.stays.area}</span>
           </p>
         )}
         <div className="row">
