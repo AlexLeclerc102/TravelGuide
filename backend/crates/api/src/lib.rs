@@ -1,6 +1,7 @@
 //! API de l'application collaborative de planification de voyage.
 
 pub mod account;
+pub mod assistant;
 pub mod auth;
 pub mod circuits;
 pub mod client_ip;

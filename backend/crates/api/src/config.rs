@@ -28,6 +28,83 @@ pub struct Config {
     pub valhalla_url: Option<String>,
     /// Extrait OpenStreetMap (`.osm.pbf`) dont les lieux nourrissent les suggestions.
     pub osm_extract: Option<PathBuf>,
+    /// Assistant IA (OpenRouter). Absent sans `OPENROUTER_API_KEY` : assistant désactivé.
+    pub ai: Option<AiConfig>,
+}
+
+/// Configuration de l'assistant IA.
+#[derive(Debug, Clone)]
+pub struct AiConfig {
+    pub api_key: Secret,
+    pub base_url: String,
+    /// Modèle de l'agent principal.
+    pub model: String,
+    /// Modèle des sous-appels (résumés, extraction de pages, recherche web).
+    pub model_small: String,
+    /// Modèles sélectionnables par conversation (dev, comparaison), en plus de `model`.
+    pub models_allowed: Vec<String>,
+    /// Hébergeurs OpenRouter autorisés (`provider.only`), couverts par un accord de
+    /// traitement des données. Vide : tous les hébergeurs sans collecte de données.
+    pub providers_only: Vec<String>,
+    /// Budget quotidien par utilisateur, en dollars.
+    pub daily_budget_usd: f64,
+    /// Tours d'outils au plus par message de l'utilisateur.
+    pub max_rounds: u32,
+}
+
+/// Valeur secrète : jamais affichée par `Debug` (donc jamais journalisée).
+#[derive(Clone)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(***)")
+    }
+}
+
+impl AiConfig {
+    pub fn from_env() -> anyhow::Result<Option<Self>> {
+        let Some(api_key) = std::env::var("OPENROUTER_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+        else {
+            return Ok(None);
+        };
+        let model = optional("AI_MODEL", "z-ai/glm-5.2");
+        let model_small = std::env::var("AI_MODEL_SMALL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| model.clone());
+        Ok(Some(Self {
+            api_key: Secret::new(api_key.trim()),
+            base_url: optional("OPENROUTER_URL", "https://openrouter.ai/api/v1"),
+            model,
+            model_small,
+            models_allowed: list("AI_MODELS_ALLOWED"),
+            providers_only: list("AI_PROVIDERS_ONLY"),
+            daily_budget_usd: optional("AI_DAILY_BUDGET_USD", "0.50")
+                .parse()
+                .context("AI_DAILY_BUDGET_USD invalide")?,
+            max_rounds: optional("AI_MAX_ROUNDS", "8")
+                .parse()
+                .context("AI_MAX_ROUNDS invalide")?,
+        }))
+    }
+
+    /// Le modèle demandé pour une conversation est-il autorisé ?
+    pub fn allows_model(&self, model: &str) -> bool {
+        model == self.model || self.models_allowed.iter().any(|m| m == model)
+    }
 }
 
 impl Config {
@@ -65,6 +142,7 @@ impl Config {
                 .ok()
                 .filter(|s| !s.trim().is_empty())
                 .map(PathBuf::from),
+            ai: AiConfig::from_env()?,
         })
     }
 
@@ -83,6 +161,7 @@ impl Config {
             nominatim_contact: None,
             valhalla_url: None,
             osm_extract: None,
+            ai: None,
         }
     }
 
@@ -113,4 +192,14 @@ fn required(key: &str) -> anyhow::Result<String> {
 
 fn optional(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_owned())
+}
+
+/// Liste séparée par des virgules (vide si la variable est absente).
+fn list(key: &str) -> Vec<String> {
+    optional(key, "")
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
 }

@@ -39,7 +39,7 @@ opening-hours = { version = "2.1", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 tokio-tungstenite = "0.29"
 osmpbf = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 
 # Argon2 est très lent sans optimisation : on l'optimise même en dev et en test.
 [profile.dev.package.argon2]

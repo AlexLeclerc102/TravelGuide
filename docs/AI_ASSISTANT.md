@@ -373,6 +373,16 @@ Target: **< 6k input tokens** for a typical turn on a 50-place trip, more than h
 | A4 | `web_search`, `fetch_page`, enrichment flows (`add_note/link/photo` with sources) | Finds new places and enriches existing ones with cited sources |
 | A5 | Token work: history compaction, tool groups, result shrinking, caching metrics; model comparison runs | Typical turn < 6k tokens, cache hit > 50 %; GLM vs 2–3 others compared on the eval suite |
 
+A0 findings (OpenRouter public model list, 2026-10-22):
+- `z-ai/glm-5.2` exists with tool calling; its canonical dated slug is `z-ai/glm-5.2-20260616`
+  (whether requests accept the dated slug is checked on the first live eval run). The response's
+  `model` field reports the dated version, and it is stored on each message.
+- Newer in the family: `z-ai/glm-5.3` (cheaper input) and `z-ai/glm-5.3-flash` (very cheap,
+  a natural `AI_MODEL_SMALL` candidate). Both go into the first comparison run.
+- GLM 5.2 is served by about 35 hosts, among them `mistral/eu` (EU) and `z-ai` (the model's
+  maker). Choosing the hosts for `AI_PROVIDERS_ONLY` is a legal decision (DPA), not a technical
+  one; until it is made, requests only exclude hosts that collect data.
+
 Open questions:
 - Should conversations stay private, or be shareable with the group?
 - Who pays for the assistant: the organizer's plan, or a budget per trip rather than per user?
