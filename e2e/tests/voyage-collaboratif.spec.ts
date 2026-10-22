@@ -58,7 +58,7 @@ test('un groupe prépare un voyage ensemble, en direct', async ({ page: ana, bro
 
   await test.step('Ana crée son compte et un voyage de deux jours', async () => {
     await register(ana, 'Ana', anaEmail)
-    await ana.getByRole('button', { name: 'Nouveau voyage' }).click()
+    await ana.getByRole('button', { name: 'Nouveau voyage', exact: true }).click()
     await ana.getByLabel('Nom du voyage').fill('Costa Rica en groupe')
     await ana.getByLabel('Du', { exact: true }).fill('2026-12-01')
     await ana.getByLabel('Au', { exact: true }).fill('2026-12-02')
