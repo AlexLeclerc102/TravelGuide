@@ -19,6 +19,34 @@ pub struct AccountExport {
     pub pois_created: Vec<PoiExport>,
     /// Mes avis (supprimés avec le compte).
     pub reviews: Vec<ReviewExport>,
+    /// Notes ajoutées aux lieux (elles restent, sans auteur, après suppression du compte).
+    pub poi_notes: Vec<PoiNoteExport>,
+    /// Liens ajoutés aux lieux (ils restent, sans auteur, après suppression du compte).
+    pub poi_links: Vec<PoiLinkExport>,
+}
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct PoiNoteExport {
+    pub trip_id: Uuid,
+    pub poi_id: Uuid,
+    pub poi_name: String,
+    pub body: String,
+    pub source_url: Option<String>,
+    pub via_assistant: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct PoiLinkExport {
+    pub trip_id: Uuid,
+    pub poi_id: Uuid,
+    pub poi_name: String,
+    pub url: String,
+    pub title: String,
+    pub via_assistant: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -92,6 +120,24 @@ pub async fn export(db: &PgPool, user: User) -> sqlx::Result<AccountExport> {
     .bind(user.id)
     .fetch_all(db)
     .await?;
+    let poi_notes = sqlx::query_as(
+        "SELECT p.trip_id, n.poi_id, p.name AS poi_name, n.body, n.source_url, n.via_assistant,
+                n.created_at
+         FROM poi_notes n JOIN pois p ON p.id = n.poi_id
+         WHERE n.author_id = $1 ORDER BY n.created_at",
+    )
+    .bind(user.id)
+    .fetch_all(db)
+    .await?;
+    let poi_links = sqlx::query_as(
+        "SELECT p.trip_id, l.poi_id, p.name AS poi_name, l.url, l.title, l.via_assistant,
+                l.created_at
+         FROM poi_links l JOIN pois p ON p.id = l.poi_id
+         WHERE l.author_id = $1 ORDER BY l.created_at",
+    )
+    .bind(user.id)
+    .fetch_all(db)
+    .await?;
     Ok(AccountExport {
         exported_at: OffsetDateTime::now_utc(),
         user,
@@ -99,6 +145,8 @@ pub async fn export(db: &PgPool, user: User) -> sqlx::Result<AccountExport> {
         trips,
         pois_created,
         reviews,
+        poi_notes,
+        poi_links,
     })
 }
 

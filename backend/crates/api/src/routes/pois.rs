@@ -9,6 +9,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 
+use crate::assistant::ViaAssistant;
 use crate::auth::CurrentUser;
 use crate::error::{AppError, AppResult, ErrorBody};
 use crate::opening::{self, DaySchedule, HoursStatus};
@@ -51,6 +52,7 @@ pub struct CreatePoi {
     pub wikidata: Option<String>,
     /// Article Wikipédia au format OSM `langue:Titre`.
     pub wikipedia: Option<String>,
+    /// Première note du lieu (voir les routes `notes`).
     pub notes: Option<String>,
     /// Objet OSM d'origine (un même lieu n'est ajouté qu'une fois par voyage).
     pub osm: Option<OsmRef>,
@@ -75,7 +77,6 @@ pub struct UpdatePoi {
     pub email: Option<String>,
     pub wikidata: Option<String>,
     pub wikipedia: Option<String>,
-    pub notes: Option<String>,
 }
 
 /// Présentation Wikipédia d'un lieu.
@@ -199,6 +200,7 @@ async fn create_poi(
     State(state): State<AppState>,
     current: CurrentUser,
     client: ClientId,
+    via: ViaAssistant,
     Path(trip_id): Path<Uuid>,
     Json(req): Json<CreatePoi>,
 ) -> AppResult<(StatusCode, Json<Poi>)> {
@@ -246,10 +248,10 @@ async fn create_poi(
     }
     let poi_id: Uuid = sqlx::query_scalar(
         "INSERT INTO pois (trip_id, name, category, location, address, duration_min,
-                           opening_hours, country_code, website, notes, osm_type, osm_id, created_by,
+                           opening_hours, country_code, website, osm_type, osm_id, created_by,
                            phone, email, wikidata, wikipedia, placeholder)
          VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, $6, $7,
-                 $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                 $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
          RETURNING id",
     )
     .bind(trip_id)
@@ -262,7 +264,6 @@ async fn create_poi(
     .bind(&opening_hours)
     .bind(&country_code)
     .bind(&website)
-    .bind(&notes)
     .bind(req.osm.map(|o| o.osm_type.as_str()))
     .bind(req.osm.map(|o| o.id))
     .bind(current.user.id)
@@ -274,6 +275,17 @@ async fn create_poi(
     .fetch_one(&mut *tx)
     .await
     .map_err(pois::map_duplicate)?;
+    if !notes.is_empty() {
+        sqlx::query(
+            "INSERT INTO poi_notes (poi_id, author_id, via_assistant, body) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(poi_id)
+        .bind(current.user.id)
+        .bind(via.0)
+        .bind(&notes)
+        .execute(&mut *tx)
+        .await?;
+    }
     let dates = pois::trip_dates(&mut *tx, trip_id).await?;
     let poi = pois::get(&mut *tx, trip_id, poi_id, current.user.id, dates).await?;
     tx.commit().await?;
@@ -357,16 +369,12 @@ async fn update_poi(
         Some(v) => validate::wikipedia(Some(&v))?,
         None => cur.wikipedia,
     };
-    let notes = match req.notes {
-        Some(n) => validate::notes(&n)?,
-        None => cur.notes,
-    };
 
     let updated = sqlx::query(
         "UPDATE pois SET name = $4, category = $5,
              location = ST_SetSRID(ST_MakePoint($6, $7), 4326)::geography,
-             address = $8, duration_min = $9, opening_hours = $10, website = $11, notes = $12,
-             phone = $13, email = $14, wikidata = $15, wikipedia = $16, placeholder = $17,
+             address = $8, duration_min = $9, opening_hours = $10, website = $11,
+             phone = $12, email = $13, wikidata = $14, wikipedia = $15, placeholder = $16,
              version = version + 1
          WHERE id = $1 AND trip_id = $2 AND version = $3",
     )
@@ -381,7 +389,6 @@ async fn update_poi(
     .bind(duration)
     .bind(&opening_hours)
     .bind(&website)
-    .bind(&notes)
     .bind(&phone)
     .bind(&email)
     .bind(&wikidata)

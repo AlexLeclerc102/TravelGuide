@@ -132,8 +132,14 @@ pub fn review_comment(raw: &str) -> Result<String, AppError> {
     bounded_text(raw, 0, 2000, "le commentaire")
 }
 
+/// Note d'un lieu (au moins un caractère).
+pub fn note(raw: &str) -> Result<String, AppError> {
+    bounded_text(raw, 1, 4000, "la note")
+}
+
+/// Première note facultative, à l'ajout d'un lieu (vide : aucune).
 pub fn notes(raw: &str) -> Result<String, AppError> {
-    bounded_text(raw, 0, 2000, "les notes")
+    bounded_text(raw, 0, 4000, "la note")
 }
 
 /// Coordonnées WGS84 finies et dans les bornes.
@@ -171,6 +177,38 @@ pub fn website(raw: Option<&str>) -> Result<Option<String>, AppError> {
             "le site web doit être un lien http(s) valide".into(),
         ))
     }
+}
+
+/// Lien ajouté à un lieu : https uniquement (le contenu est partagé avec tout le groupe).
+pub fn link_url(raw: &str) -> Result<String, AppError> {
+    let v = raw.trim();
+    let ok = v.starts_with("https://")
+        && v.len() > "https://".len()
+        && v.len() <= 500
+        && !v.chars().any(|c| c.is_whitespace() || c.is_control());
+    if ok {
+        Ok(v.to_owned())
+    } else {
+        Err(AppError::BadRequest(
+            "le lien doit être une adresse https valide".into(),
+        ))
+    }
+}
+
+/// Page d'où vient une information (http(s)) ; vide => aucune.
+pub fn source_url(raw: Option<&str>) -> Result<Option<String>, AppError> {
+    website(raw)
+        .map_err(|_| AppError::BadRequest("la source doit être un lien http(s) valide".into()))
+}
+
+pub fn link_title(raw: &str) -> Result<String, AppError> {
+    let title = bounded_text(raw, 1, 200, "le titre du lien")?;
+    if title.contains('\n') {
+        return Err(AppError::BadRequest(
+            "le titre du lien tient sur une ligne".into(),
+        ));
+    }
+    Ok(title)
 }
 
 /// Téléphone d'un lieu : chiffres et séparateurs usuels (`+`, espace, `-`, `.`, `/`,
@@ -257,7 +295,9 @@ mod tests {
         assert!(poi_name("a\nb").is_err());
         assert!(poi_name(&"x".repeat(201)).is_err());
         assert_eq!(notes("ligne 1\nligne 2").unwrap(), "ligne 1\nligne 2");
-        assert!(notes(&"x".repeat(2001)).is_err());
+        assert!(notes(&"x".repeat(4001)).is_err());
+        assert!(note(" ").is_err());
+        assert!(note(&"x".repeat(4000)).is_ok());
         assert!(coordinates(9.9, -84.1).is_ok());
         for (lat, lon) in [
             (91.0, 0.0),

@@ -65,7 +65,6 @@ const museum: Poi = {
   email: null,
   wikidata: null,
   wikipedia: null,
-  notes: '',
   osm: { type: 'relation', id: 4144800 },
   rating: { count: 0, average: null, min: null, max: null, disagreement: false },
   my_review: null,

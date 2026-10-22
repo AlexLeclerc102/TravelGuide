@@ -86,7 +86,6 @@ export interface Poi {
   wikidata: string | null
   /** Article Wikipédia au format OSM `langue:Titre`. */
   wikipedia: string | null
-  notes: string
   osm: OsmRef | null
   rating: GroupRating
   my_review: MyReview | null
@@ -112,6 +111,7 @@ export interface PoiInput {
   email?: string
   wikidata?: string
   wikipedia?: string
+  /** Première note du lieu (à l'ajout uniquement). */
   notes?: string
   osm?: OsmRef | null
 }

@@ -3,12 +3,13 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { meKey } from '../api/auth'
 import { ApiError, apiFetch, CLIENT_ID } from '../api/client'
 import { t } from '../i18n/fr'
+import { contentKeys } from '../api/poiContent'
 import { poiKeys } from '../api/pois'
 import { suggestionKeys } from '../api/suggestions'
 import { tripKeys } from '../api/trips'
 
 /** Ce qui a changé dans le voyage (voir `realtime::Topic` côté serveur). */
-export type Topic = 'trip' | 'members' | 'invitations' | 'pois' | 'reviews' | 'days' | 'itinerary' | 'suggestions'
+export type Topic = 'trip' | 'members' | 'invitations' | 'pois' | 'reviews' | 'days' | 'itinerary' | 'suggestions' | 'poi_content'
 
 export interface Person {
   user_id: string
@@ -63,14 +64,18 @@ export function invalidateTopics(qc: QueryClient, tripId: string, topics: Topic[
       case 'itinerary':
         invalidate(tripKeys.itinerary(tripId))
         break
+      case 'poi_content':
+        invalidate(contentKeys.all(tripId))
+        break
     }
   }
   // Les suggestions dépendent des lieux, des jours, des avis, de l'itinéraire et des refus.
-  if (topics.some((topic) => topic !== 'members' && topic !== 'invitations')) invalidate(suggestionKeys.all(tripId))
+  const affectsSuggestions = (topic: Topic) => topic !== 'members' && topic !== 'invitations' && topic !== 'poi_content'
+  if (topics.some(affectsSuggestions)) invalidate(suggestionKeys.all(tripId))
 }
 
 /** Sujet le plus parlant d'une notification (une modification en touche souvent plusieurs). */
-const PRIORITY: Topic[] = ['members', 'reviews', 'pois', 'trip', 'days', 'itinerary', 'invitations']
+const PRIORITY: Topic[] = ['members', 'reviews', 'pois', 'poi_content', 'trip', 'days', 'itinerary', 'invitations']
 
 /** « Ana a modifié les lieux (14:05) ». */
 export function describeChange(change: LastChange) {

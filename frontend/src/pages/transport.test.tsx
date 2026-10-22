@@ -47,7 +47,6 @@ function poi(id: string, name: string, category: Poi['category'] = 'sight'): Poi
     email: null,
     wikidata: null,
     wikipedia: null,
-    notes: '',
     osm: null,
     rating: { count: 0, average: null, min: null, max: null, disagreement: false },
     my_review: null,

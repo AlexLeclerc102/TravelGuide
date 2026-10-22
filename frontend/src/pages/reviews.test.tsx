@@ -44,7 +44,6 @@ function poi(id: string, name: string, rating: GroupRating = noRating, extra: Pa
     email: null,
     wikidata: null,
     wikipedia: null,
-    notes: '',
     osm: null,
     rating,
     my_review: null,

@@ -188,7 +188,7 @@ async fn invalid_input_is_rejected(db: PgPool) {
         ("email", json!("museo")),
         ("wikidata", json!("190622")),
         ("wikipedia", json!("Volcán Arenal")),
-        ("notes", json!("x".repeat(2001))),
+        ("notes", json!("x".repeat(4001))),
         ("opening_hours", json!("x".repeat(501))),
         ("osm", json!({ "type": "node", "id": -1 })),
     ] {
@@ -291,7 +291,7 @@ async fn update_uses_optimistic_locking_and_clears_fields(db: PgPool) {
         .patch(
             &uri,
             json!({ "version": 1, "duration_min": 120, "lat": 10.0, "lon": -84.2,
-                    "opening_hours": "", "website": "", "phone": "", "notes": "Gratuit le dimanche" }),
+                    "opening_hours": "", "website": "", "phone": "" }),
             Some(&editor),
         )
         .await;
@@ -304,7 +304,6 @@ async fn update_uses_optimistic_locking_and_clears_fields(db: PgPool) {
     assert_eq!(res.body["website"], Value::Null);
     assert_eq!(res.body["phone"], Value::Null);
     assert_eq!(res.body["wikipedia"], "es:Museo Nacional de Costa Rica"); // inchangé
-    assert_eq!(res.body["notes"], "Gratuit le dimanche");
     assert_eq!(res.body["name"], "Museo Nacional"); // inchangé
 
     // Version obsolète : refus.

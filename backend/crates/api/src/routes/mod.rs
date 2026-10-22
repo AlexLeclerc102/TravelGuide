@@ -9,6 +9,7 @@ pub mod itinerary;
 pub mod me;
 pub mod members;
 pub mod places;
+pub mod poi_content;
 pub mod pois;
 pub mod realtime;
 pub mod reviews;
@@ -28,6 +29,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(invitations::router())
         .merge(places::router())
         .merge(pois::router())
+        .merge(poi_content::router())
         .merge(reviews::router())
         .merge(transport::router())
         .merge(stays::router())

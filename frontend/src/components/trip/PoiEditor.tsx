@@ -46,7 +46,7 @@ const toForm = (v: PoiInput | Poi): Form => ({
   website: v.website ?? '',
   phone: v.phone ?? '',
   email: v.email ?? '',
-  notes: v.notes ?? '',
+  notes: 'notes' in v ? (v.notes ?? '') : '',
   placeholder: v.placeholder ?? false,
 })
 
@@ -90,13 +90,12 @@ export function PoiEditor({ tripId, poi, draft, onSaved, onClose }: Props) {
       website: form.website,
       phone: form.phone,
       email: form.email,
-      notes: form.notes,
       placeholder: form.category === 'lodging' && form.placeholder,
     }
     if (poi) {
       update.mutate({ id: poi.id, version: poi.version, ...values }, { onSuccess: onSaved })
     } else if (draft) {
-      create.mutate({ ...draft, ...values }, { onSuccess: onSaved })
+      create.mutate({ ...draft, ...values, notes: form.notes }, { onSuccess: onSaved })
     }
   }
 
@@ -163,10 +162,13 @@ export function PoiEditor({ tripId, poi, draft, onSaved, onClose }: Props) {
           <input type="email" value={form.email} onChange={set('email')} maxLength={254} />
         </label>
       </div>
-      <label>
-        {t.pois.notes}
-        <textarea value={form.notes} onChange={set('notes')} maxLength={2000} rows={2} />
-      </label>
+      {/* Ensuite, les notes ont leur propre section (plusieurs notes, avec auteur et source). */}
+      {!poi && (
+        <label>
+          {t.pois.notes}
+          <textarea value={form.notes} onChange={set('notes')} maxLength={4000} rows={2} />
+        </label>
+      )}
       {error && (
         <p className="error" role="alert">
           {error}
@@ -209,7 +211,6 @@ export function PoiDetails({ tripId, poi }: { tripId: string; poi: Poi }) {
       ) : (
         <p className="muted small">{t.pois.hoursUnknown}</p>
       )}
-      {poi.notes && <p className="small pre-line">{poi.notes}</p>}
     </div>
   )
 }

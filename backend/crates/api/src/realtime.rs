@@ -39,6 +39,8 @@ pub enum Topic {
     Itinerary,
     /// Suggestions écartées (les suggestions dépendent aussi des lieux, jours et avis).
     Suggestions,
+    /// Notes, liens et photos des lieux.
+    PoiContent,
 }
 
 /// Auteur d'une modification.

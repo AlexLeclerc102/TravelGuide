@@ -511,6 +511,17 @@ details.card > :last-child:not(summary) { margin-bottom: 1.25rem; }
 .review-list li.extreme { background: var(--surbrillance); padding-inline: 0.5rem; }
 .review-list p { margin: 0.2rem 0 0; }
 
+/* Notes et liens d'un lieu. */
+.poi-content { display: grid; gap: 0.55rem; margin-top: 0.9rem; border-top: var(--trait-pointille); padding-top: 0.8rem; }
+.poi-content h3 { margin: 0; }
+.content-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.content-list li { border-bottom: var(--trait-pointille); padding: 0.5rem 0; }
+.content-list p { margin: 0; }
+.content-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.5rem; margin-top: 0.2rem !important; }
+.content-meta .link-button { margin-left: 0; font-weight: 500; }
+.content-form { gap: 0.45rem; }
+.tag-assistant { border-style: dashed; margin-left: 0.4rem; }
+
 /* ---------- Transports ---------- */
 
 .day-list { list-style: none; padding: 0; margin: 0.6rem 0; display: grid; gap: 0.6rem; }

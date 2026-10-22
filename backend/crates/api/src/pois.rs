@@ -40,7 +40,6 @@ pub struct Poi {
     pub wikidata: Option<String>,
     /// Article Wikipédia au format OSM `langue:Titre`.
     pub wikipedia: Option<String>,
-    pub notes: String,
     pub osm: Option<OsmRef>,
     /// Notes du groupe.
     pub rating: GroupRating,
@@ -104,7 +103,6 @@ struct PoiRow {
     email: Option<String>,
     wikidata: Option<String>,
     wikipedia: Option<String>,
-    notes: String,
     osm_type: Option<String>,
     osm_id: Option<i64>,
     ratings: Vec<i16>,
@@ -150,7 +148,6 @@ impl PoiRow {
             email: self.email,
             wikidata: self.wikidata,
             wikipedia: self.wikipedia,
-            notes: self.notes,
             osm,
             rating: planner::ratings::summarize(&to_u8(&self.ratings)).into(),
             my_review: self.my_rating.map(|r| MyReview {
@@ -176,7 +173,7 @@ const POI_SELECT: &str = "
     SELECT p.id, p.trip_id, p.name, p.category, p.placeholder,
            ST_Y(p.location::geometry) AS lat, ST_X(p.location::geometry) AS lon,
            p.address, p.duration_min, p.opening_hours, p.country_code, p.website,
-           p.phone, p.email, p.wikidata, p.wikipedia, p.notes,
+           p.phone, p.email, p.wikidata, p.wikipedia,
            p.osm_type, p.osm_id,
            COALESCE((SELECT array_agg(r.rating) FROM reviews r WHERE r.poi_id = p.id), '{}')
                AS ratings,
@@ -229,6 +226,33 @@ pub async fn get(
             .fetch_optional(db)
             .await?;
     row.ok_or(AppError::NotFound)?.into_poi(trip_dates)
+}
+
+/// Vérifie que le POI appartient au voyage et le verrouille jusqu'à la fin de la
+/// transaction (sérialise les ajouts concurrents de notes, liens et photos).
+pub async fn lock_in_trip(db: impl PgExecutor<'_>, trip_id: Uuid, poi_id: Uuid) -> AppResult<()> {
+    sqlx::query("SELECT 1 FROM pois WHERE id = $1 AND trip_id = $2 FOR UPDATE")
+        .bind(poi_id)
+        .bind(trip_id)
+        .fetch_optional(db)
+        .await?
+        .map(|_| ())
+        .ok_or(AppError::NotFound)
+}
+
+/// Vérifie que le POI appartient au voyage.
+pub async fn ensure_in_trip(db: impl PgExecutor<'_>, trip_id: Uuid, poi_id: Uuid) -> AppResult<()> {
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pois WHERE id = $1 AND trip_id = $2)")
+            .bind(poi_id)
+            .bind(trip_id)
+            .fetch_one(db)
+            .await?;
+    if exists {
+        Ok(())
+    } else {
+        Err(AppError::NotFound)
+    }
 }
 
 /// Traduit la violation d'unicité « même lieu OSM dans le voyage » en 409.
